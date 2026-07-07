@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg0">#0B1026</color>
+    <color name="bg1">#111A33</color>
+    <color name="accent">#22D3EE</color>
+    <color name="accentDark">#04202A</color>
+    <color name="pink">#F472B6</color>
+    <color name="textDim">#93A3BF</color>
+</resources>
