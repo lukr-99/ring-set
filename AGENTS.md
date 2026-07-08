@@ -1,0 +1,42 @@
+# AGENTS.md — how to pull the ring's data off the phone
+
+Instructions for an automated agent (or a human) to export the data that the
+**Ring Set** app has synced from the ring, and copy it to the computer.
+
+## What/where
+- The app reads the ring's stored **heart-rate log** over BLE and writes/merges it into
+  a CSV in its private files dir on the phone: `/data/data/com.krejci.qringset/files/ring_hr.csv`.
+- CSV schema: `timestamp,epoch_s,bpm` (one row per logged reading; `timestamp` is local
+  ISO-8601, `epoch_s` is Unix seconds, `bpm` is heart rate).
+- Each sync **merges** into the existing CSV keyed by timestamp, so history accumulates
+  across syncs even beyond the ring's small rolling buffer.
+
+## Prerequisites
+1. Phone connected over USB with **USB debugging** authorized (`adb devices` shows `device`).
+2. The app installed as a **debug** build (it is, from this repo) — this is what lets
+   `adb run-as` read the app's private files without root.
+3. In the app, tap **"Sync heart rate"** first so the CSV is up to date.
+
+## Pull it (recommended)
+```powershell
+.\pull-data.ps1                          # -> %USERPROFILE%\Desktop\ring-data\ring_hr.csv
+.\pull-data.ps1 -Dest D:\health\ring     # custom destination folder
+```
+
+## Manual equivalent
+```bash
+adb exec-out run-as com.krejci.qringset ls files
+adb exec-out run-as com.krejci.qringset cat files/ring_hr.csv > ring_hr.csv
+```
+(`run-as` reads relative to the app's data dir, so the path is `files/ring_hr.csv`.)
+
+## Alternative: in-app Share
+Tap **Share** in the app to send `ring_hr.csv` via the Android share sheet (Drive,
+email, Files, etc.) — useful when the phone isn't tethered to this PC.
+
+## Notes / gotchas
+- `run-as` only works because this is a **debug** build. A release-signed build would
+  need the in-app Share or a `MediaStore`/public-Downloads export instead.
+- Only the heart-rate log is implemented so far. SpO2, steps, and sleep are on the
+  roadmap and will land as additional `*.csv` files that `pull-data.ps1` picks up
+  automatically (it copies every `*.csv` in the app's files dir).

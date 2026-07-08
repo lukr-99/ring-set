@@ -10,8 +10,10 @@ import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -20,7 +22,14 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import com.krejci.qringset.databinding.ActivityMainBinding
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+import java.util.TreeMap
 import java.util.UUID
 
 class MainActivity : AppCompatActivity() {
@@ -36,6 +45,18 @@ class MainActivity : AppCompatActivity() {
     private var pending: (() -> Unit)? = null
     private var connectTimeout: Runnable? = null
 
+    // ---- heart-rate log sync state ----
+    private val hrHistory = TreeMap<Long, Int>()   // epochSeconds -> bpm (merged across syncs)
+    private val syncOffsets = ArrayDeque<Int>()     // day offsets still to request (0 = today)
+    private var syncing = false
+    private var syncTimeout: Runnable? = null
+    private var newSampleCount = 0
+    private var curInterval = 5
+    private var curSize = 0
+    private var curCount = 0
+    private var curDayStart = 0L
+    private var curDayIdx = 0
+
     companion object {
         // Set via RING_MAC env var or ring.mac in local.properties at build time.
         private val MAC = BuildConfig.RING_MAC
@@ -44,6 +65,9 @@ class MainActivity : AppCompatActivity() {
         private val NOTIFY_UUID: UUID = UUID.fromString("6e400003-b5a3-f393-e0a9-e50e24dcca9e")
         private val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         private const val CMD_HR_LOG = 0x16
+        private const val CMD_HR_READ = 0x15
+        private const val HR_CSV = "ring_hr.csv"
+        private const val SYNC_STALL_MS = 8_000L
         private const val REQ_PERM = 42
         private const val CONNECT_TIMEOUT_MS = 12_000L
         private const val RECONNECT_DELAY_MS = 1_600L
@@ -78,6 +102,8 @@ class MainActivity : AppCompatActivity() {
             val last = prefs.getInt(KEY_LAST, -1)
             reconnectCycle(if (last in 1..255) last else null)
         }
+        b.syncBtn.setOnClickListener { startHrSync() }
+        b.shareBtn.setOnClickListener { shareCsv() }
 
         b.footer.text = "Ring ${BuildConfig.RING_MAC}\nWake the ring & close the QRing app before setting."
     }
@@ -229,12 +255,166 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleResponse(r: ByteArray) {
-        if (r.size < 4 || (r[0].toInt() and 0xFF) != CMD_HR_LOG) return
-        val enabled = r[2].toInt() and 0xFF
-        val interval = r[3].toInt() and 0xFF
-        val state = if (enabled == 1) "ON" else "OFF"
-        setStatus("Ring is set to $interval min  ($state)")
+        if (r.isEmpty()) return
+        when (r[0].toInt() and 0xFF) {
+            CMD_HR_LOG -> {
+                if (r.size < 4) return
+                val enabled = r[2].toInt() and 0xFF
+                val interval = r[3].toInt() and 0xFF
+                val state = if (enabled == 1) "ON" else "OFF"
+                setStatus("Ring is set to $interval min  ($state)")
+            }
+            CMD_HR_READ -> handleHrPacket(r)
+        }
     }
+
+    // ---- heart-rate log sync ----
+
+    private fun startHrSync() {
+        if (syncing) { toast("Already syncing…"); return }
+        setDataStatus("Syncing heart-rate log…")
+        withRing {
+            syncing = true
+            newSampleCount = 0
+            loadHistory()
+            syncOffsets.clear()
+            syncOffsets.addAll(listOf(0, -1, -2))   // today + 2 previous days
+            requestNextDay()
+        }
+    }
+
+    private fun requestNextDay() {
+        val off = syncOffsets.removeFirstOrNull()
+        if (off == null) { finishSync(); return }
+        curSize = 0; curCount = 0; curDayIdx = 0
+        curDayStart = midnightEpoch(off)
+        scheduleSyncStall()
+        doWrite(packet(hrReadPayload(curDayStart)), confirm = null)
+    }
+
+    private fun handleHrPacket(r: ByteArray) {
+        if (!syncing || r.size < 15) return
+        scheduleSyncStall()
+        when (val sub = r[1].toInt() and 0xFF) {
+            0xFF -> requestNextDay()                       // no data / error for this day
+            0 -> {
+                curSize = r[2].toInt() and 0xFF
+                curInterval = (r[3].toInt() and 0xFF).coerceAtLeast(1)
+                curCount = 0; curDayIdx = 0
+                if (curSize == 0) requestNextDay()
+            }
+            1 -> {
+                curDayStart = le32(r, 2)
+                for (i in 6..14) addHr(r[i])
+                curCount++
+                if (curCount >= curSize) requestNextDay()
+            }
+            else -> {
+                for (i in 2..14) addHr(r[i])
+                curCount++
+                if (curCount >= curSize) requestNextDay()
+            }
+        }
+    }
+
+    private fun addHr(b: Byte) {
+        val bpm = b.toInt() and 0xFF
+        val ts = curDayStart + curDayIdx.toLong() * curInterval * 60
+        curDayIdx++
+        val nowPlus = System.currentTimeMillis() / 1000 + 60
+        if (bpm in 1..250 && ts <= nowPlus) {
+            if (hrHistory.put(ts, bpm) == null) newSampleCount++
+        }
+    }
+
+    private fun finishSync() {
+        cancelSyncStall()
+        if (!syncing) return
+        syncing = false
+        val f = saveHistory()
+        setDataStatus("Synced ✓  ${hrHistory.size} readings total  (+$newSampleCount new)\nSaved to ${f.name}")
+        toast("Synced: +$newSampleCount new readings")
+    }
+
+    private fun scheduleSyncStall() {
+        cancelSyncStall()
+        syncTimeout = Runnable { if (syncing) finishSync() }
+        handler.postDelayed(syncTimeout!!, SYNC_STALL_MS)
+    }
+
+    private fun cancelSyncStall() {
+        syncTimeout?.let { handler.removeCallbacks(it) }
+        syncTimeout = null
+    }
+
+    private fun midnightEpoch(dayOffset: Int): Long {
+        val c = Calendar.getInstance()
+        c.set(Calendar.HOUR_OF_DAY, 0)
+        c.set(Calendar.MINUTE, 0)
+        c.set(Calendar.SECOND, 0)
+        c.set(Calendar.MILLISECOND, 0)
+        c.add(Calendar.DAY_OF_MONTH, dayOffset)
+        return c.timeInMillis / 1000
+    }
+
+    private fun hrReadPayload(epoch: Long): ByteArray {
+        val ts = epoch.toInt()
+        return byteArrayOf(
+            CMD_HR_READ.toByte(),
+            (ts and 0xFF).toByte(),
+            ((ts ushr 8) and 0xFF).toByte(),
+            ((ts ushr 16) and 0xFF).toByte(),
+            ((ts ushr 24) and 0xFF).toByte()
+        )
+    }
+
+    private fun le32(r: ByteArray, off: Int): Long =
+        (r[off].toLong() and 0xFF) or
+            ((r[off + 1].toLong() and 0xFF) shl 8) or
+            ((r[off + 2].toLong() and 0xFF) shl 16) or
+            ((r[off + 3].toLong() and 0xFF) shl 24)
+
+    // ---- CSV persistence + share ----
+
+    private fun csvFile() = File(filesDir, HR_CSV)
+
+    private fun loadHistory() {
+        val f = csvFile()
+        if (!f.exists()) return
+        f.readLines().drop(1).forEach { line ->
+            val parts = line.split(',')
+            if (parts.size >= 3) {
+                val ep = parts[1].toLongOrNull()
+                val bpm = parts[2].toIntOrNull()
+                if (ep != null && bpm != null) hrHistory[ep] = bpm
+            }
+        }
+    }
+
+    private fun saveHistory(): File {
+        val fmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+        val sb = StringBuilder("timestamp,epoch_s,bpm\n")
+        for ((ep, bpm) in hrHistory) {
+            sb.append(fmt.format(Date(ep * 1000))).append(',').append(ep).append(',').append(bpm).append('\n')
+        }
+        val f = csvFile()
+        f.writeText(sb.toString())
+        return f
+    }
+
+    private fun shareCsv() {
+        val f = csvFile()
+        if (!f.exists()) { toast("No data yet — tap Sync first"); return }
+        val uri: Uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", f)
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/csv"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(Intent.createChooser(send, "Share heart-rate CSV"))
+    }
+
+    private fun setDataStatus(s: String) = runOnUiThread { b.dataStatus.text = s }
 
     @SuppressLint("MissingPermission")
     private fun doWrite(pkt: ByteArray, confirm: String?) {
