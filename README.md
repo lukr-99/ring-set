@@ -17,6 +17,9 @@ This app writes the ring's raw BLE command, so you can pick **any interval from
 - Quick presets: **1 · 3 · 5 · 10 · 30 · 60 min**
 - **Custom** interval setter (1–255 minutes)
 - **Check current interval on ring** — reads the value straight from the ring
+- **Reconnect** (manual button + "reconnect after setting" toggle) — drops and
+  re-establishes the BLE link and re-applies the interval, which makes the ring
+  commit the change (otherwise it can revert to its previous value)
 - Connects directly by MAC, no account/cloud, works offline
 - Material 3 dark UI, adaptive launcher icon
 

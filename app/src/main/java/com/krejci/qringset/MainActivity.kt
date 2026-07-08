@@ -9,6 +9,8 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.content.Context
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -24,6 +26,7 @@ import java.util.UUID
 class MainActivity : AppCompatActivity() {
 
     private lateinit var b: ActivityMainBinding
+    private lateinit var prefs: SharedPreferences
     private val handler = Handler(Looper.getMainLooper())
 
     private var gatt: BluetoothGatt? = null
@@ -31,6 +34,7 @@ class MainActivity : AppCompatActivity() {
     private var connecting = false
     private var ready = false
     private var pending: (() -> Unit)? = null
+    private var connectTimeout: Runnable? = null
 
     companion object {
         // Set via RING_MAC env var or ring.mac in local.properties at build time.
@@ -42,12 +46,16 @@ class MainActivity : AppCompatActivity() {
         private const val CMD_HR_LOG = 0x16
         private const val REQ_PERM = 42
         private const val CONNECT_TIMEOUT_MS = 12_000L
+        private const val RECONNECT_DELAY_MS = 1_600L
+        private const val KEY_LAST = "last_interval"
+        private const val KEY_AUTO = "auto_reconnect"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         b = ActivityMainBinding.inflate(layoutInflater)
         setContentView(b.root)
+        prefs = getSharedPreferences("ringset", Context.MODE_PRIVATE)
 
         val presets = listOf(
             b.p1 to 1, b.p3 to 3, b.p5 to 5,
@@ -62,14 +70,28 @@ class MainActivity : AppCompatActivity() {
         }
         b.readBtn.setOnClickListener { readInterval() }
 
+        b.autoReconnect.isChecked = prefs.getBoolean(KEY_AUTO, false)
+        b.autoReconnect.setOnCheckedChangeListener { _, checked ->
+            prefs.edit().putBoolean(KEY_AUTO, checked).apply()
+        }
+        b.reconnectBtn.setOnClickListener {
+            val last = prefs.getInt(KEY_LAST, -1)
+            reconnectCycle(if (last in 1..255) last else null)
+        }
+
         b.footer.text = "Ring ${BuildConfig.RING_MAC}\nWake the ring & close the QRing app before setting."
     }
 
     // ---- public actions ----
 
     private fun setInterval(min: Int) {
+        prefs.edit().putInt(KEY_LAST, min).apply()
         setStatus("Setting $min min…")
-        withRing { doWrite(buildSetPacket(min), confirm = "✓ Interval set to $min min") }
+        val auto = b.autoReconnect.isChecked
+        withRing {
+            doWrite(buildSetPacket(min), confirm = if (auto) null else "✓ Interval set to $min min")
+            if (auto) handler.postDelayed({ reconnectCycle(min) }, 700)
+        }
     }
 
     private fun readInterval() {
@@ -77,12 +99,32 @@ class MainActivity : AppCompatActivity() {
         withRing { doWrite(buildReadPacket(), confirm = null) }
     }
 
+    /** Cleanly drop the BLE link and reconnect, then re-apply [applyMin] so the ring commits it. */
+    private fun reconnectCycle(applyMin: Int?) {
+        if (!hasPerm()) { askPerm(); return }
+        val adapter = btAdapter()
+        if (adapter == null || !adapter.isEnabled) { setStatus("Bluetooth is off — turn it on"); return }
+        setStatus("Reconnecting…")
+        closeGatt()
+        handler.postDelayed({
+            val a = btAdapter() ?: return@postDelayed
+            pending = {
+                if (applyMin != null) doWrite(buildSetPacket(applyMin), "✓ Set to $applyMin min (reconnected)")
+                else doWrite(buildReadPacket(), null)
+            }
+            connect(a)
+        }, RECONNECT_DELAY_MS)
+    }
+
     // ---- connection orchestration ----
+
+    private fun btAdapter(): BluetoothAdapter? =
+        (getSystemService(BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
 
     private fun withRing(action: () -> Unit) {
         pending = action
         if (!hasPerm()) { askPerm(); return }
-        val adapter = (getSystemService(BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
+        val adapter = btAdapter()
         if (adapter == null || !adapter.isEnabled) {
             setStatus("Bluetooth is off — turn it on")
             toast("Turn on Bluetooth")
@@ -104,13 +146,28 @@ class MainActivity : AppCompatActivity() {
         setStatus("Connecting to ring…")
         val device = adapter.getRemoteDevice(MAC)
         gatt = device.connectGatt(this, false, cb, BluetoothDevice.TRANSPORT_LE)
-        handler.postDelayed({
+        cancelConnectTimeout()
+        connectTimeout = Runnable {
             if (connecting && !ready) {
                 connecting = false
                 closeGatt()
                 setStatus("Couldn't reach the ring.\nWake it (off charger / move it) and close the QRing app, then tap again.")
             }
-        }, CONNECT_TIMEOUT_MS)
+        }
+        handler.postDelayed(connectTimeout!!, CONNECT_TIMEOUT_MS)
+    }
+
+    private fun cancelConnectTimeout() {
+        connectTimeout?.let { handler.removeCallbacks(it) }
+        connectTimeout = null
+    }
+
+    private fun onReady() {
+        cancelConnectTimeout()
+        ready = true
+        connecting = false
+        setStatus("Connected ✓")
+        runPending()
     }
 
     private val cb = object : BluetoothGattCallback() {
@@ -127,7 +184,6 @@ class MainActivity : AppCompatActivity() {
                     writeChar = null
                     if (gatt === g) gatt = null
                     try { g.close() } catch (_: Exception) {}
-                    setStatus("Disconnected")
                 }
             }
         }
@@ -143,17 +199,9 @@ class MainActivity : AppCompatActivity() {
                 return
             }
             writeChar = wc
-            // Enable notifications so we can read the interval back.
             g.setCharacteristicNotification(nc, true)
             val cccd = nc.getDescriptor(CCCD)
-            if (cccd == null) {
-                // No CCCD: writes still work, reads won't. Mark ready anyway.
-                ready = true
-                connecting = false
-                setStatus("Connected ✓")
-                runPending()
-                return
-            }
+            if (cccd == null) { onReady(); return }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 g.writeDescriptor(cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
             } else {
@@ -166,18 +214,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         override fun onDescriptorWrite(g: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
-            ready = true
-            connecting = false
-            setStatus("Connected ✓")
-            runPending()
+            onReady()
         }
 
-        // Android 13+
         override fun onCharacteristicChanged(g: BluetoothGatt, ch: BluetoothGattCharacteristic, value: ByteArray) {
             handleResponse(value)
         }
 
-        // Android 12 and older
         @Deprecated("Deprecated in API 33")
         @Suppress("DEPRECATION")
         override fun onCharacteristicChanged(g: BluetoothGatt, ch: BluetoothGattCharacteristic) {
@@ -208,8 +251,6 @@ class MainActivity : AppCompatActivity() {
                 g.writeCharacteristic(ch)
             }
         }
-        // Write-without-response doesn't fire a callback; confirm a set optimistically.
-        // A read has confirm == null and is answered via onCharacteristicChanged instead.
         if (confirm != null) handler.postDelayed({ setStatus(confirm) }, 350)
     }
 
@@ -258,10 +299,12 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("MissingPermission")
     private fun closeGatt() {
+        cancelConnectTimeout()
         try { gatt?.disconnect(); gatt?.close() } catch (_: Exception) {}
         gatt = null
         writeChar = null
         ready = false
+        connecting = false
     }
 
     private fun setStatus(s: String) = runOnUiThread { b.status.text = s }

@@ -50,6 +50,16 @@
             android:textColor="@color/accent"
             android:textSize="15sp" />
 
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/autoReconnect"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:paddingVertical="4dp"
+            android:text="Reconnect after setting (helps it stick)"
+            android:textColor="@color/textDim"
+            android:textSize="14sp" />
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -132,6 +142,16 @@
             android:minHeight="54dp"
             app:cornerRadius="16dp"
             android:text="Check current interval on ring" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/reconnectBtn"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:minHeight="54dp"
+            app:cornerRadius="16dp"
+            android:text="Reconnect ring now" />
 
         <TextView
             android:id="@+id/footer"
