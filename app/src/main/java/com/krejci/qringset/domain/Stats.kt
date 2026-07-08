@@ -32,6 +32,9 @@ data class SleepSummary(val totalMin: Int, val deepMin: Int, val remMin: Int, va
     companion object { val EMPTY = SleepSummary(0, 0, 0, 0, 0) }
 }
 
+/** Overall daily wellness score (0–100) with a friendly band label. */
+data class ActivityScore(val score: Int, val label: String)
+
 object StatsEngine {
     fun summarize(values: List<Int>): MetricSummary {
         if (values.isEmpty()) return MetricSummary.EMPTY
@@ -86,5 +89,42 @@ object StatsEngine {
             2 -> light += mins; 3 -> deep += mins; 4 -> rem += mins; 5 -> awake += mins
         }
         return SleepSummary(deep + rem + light, deep, rem, light, awake)
+    }
+
+    /**
+     * A single 0–100 "how's today going" score. Weighted blend of movement (steps vs goal),
+     * sleep (closeness to goal), resting HR (lower is better) and HRV (age-adjusted). Parts are
+     * skipped gracefully when data is missing, so it stays meaningful early on.
+     */
+    fun activityScore(
+        stepsToday: Int?, goalSteps: Int,
+        sleepHours: Float, goalSleepHours: Float,
+        restingHr: Int?, avgHrv: Int?, age: Int?,
+    ): ActivityScore {
+        var weight = 0f; var got = 0f
+
+        // Steps — 40%
+        if (stepsToday != null && goalSteps > 0) {
+            weight += 40f; got += 40f * (stepsToday.toFloat() / goalSteps).coerceIn(0f, 1f)
+        }
+        // Sleep — 30%, peaks at the goal
+        if (sleepHours > 0f && goalSleepHours > 0f) {
+            val closeness = (1f - (kotlin.math.abs(sleepHours - goalSleepHours) / goalSleepHours)).coerceIn(0f, 1f)
+            weight += 30f; got += 30f * closeness
+        }
+        // Resting HR — 20%, lower is better
+        restingHr?.let { rhr ->
+            val part = when { rhr <= 55 -> 1f; rhr <= 65 -> 0.85f; rhr <= 75 -> 0.65f; rhr <= 85 -> 0.4f; else -> 0.15f }
+            weight += 20f; got += 20f * part
+        }
+        // HRV — 10%, age-adjusted
+        avgHrv?.let { h ->
+            val healthy = when { age == null -> 30; age < 35 -> 40; age < 50 -> 30; else -> 20 }
+            weight += 10f; got += 10f * (h.toFloat() / healthy).coerceIn(0f, 1f)
+        }
+
+        val score = if (weight == 0f) 0 else (got / weight * 100f).toInt().coerceIn(0, 100)
+        val label = when { weight == 0f -> "No data"; score >= 80 -> "Excellent"; score >= 60 -> "Good"; score >= 40 -> "Fair"; else -> "Low" }
+        return ActivityScore(score, label)
     }
 }

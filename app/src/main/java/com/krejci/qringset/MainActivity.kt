@@ -60,9 +60,12 @@ class MainActivity : ComponentActivity() {
     private fun has(p: String) = ContextCompat.checkSelfPermission(this, p) == PackageManager.PERMISSION_GRANTED
 
     private fun ensureConnectPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !has(Manifest.permission.BLUETOOTH_CONNECT)) {
-            permLauncher.launch(arrayOf(Manifest.permission.BLUETOOTH_CONNECT))
-        }
+        val need = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !has(Manifest.permission.BLUETOOTH_CONNECT))
+            need += Manifest.permission.BLUETOOTH_CONNECT
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !has(Manifest.permission.POST_NOTIFICATIONS))
+            need += Manifest.permission.POST_NOTIFICATIONS
+        if (need.isNotEmpty()) permLauncher.launch(need.toTypedArray())
     }
 
     private fun scan() {

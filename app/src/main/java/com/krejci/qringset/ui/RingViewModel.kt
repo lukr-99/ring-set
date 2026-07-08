@@ -12,13 +12,16 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.krejci.qringset.BuildConfig
+import com.krejci.qringset.Notifier
 import com.krejci.qringset.ble.RingBle
 import com.krejci.qringset.data.ActivityType
 import com.krejci.qringset.data.MetricType
 import com.krejci.qringset.data.RingRepository
+import com.krejci.qringset.data.SyncResult
 import com.krejci.qringset.data.UserProfile
 import com.krejci.qringset.data.UserProfileStore
 import com.krejci.qringset.data.WorkoutEntity
+import com.krejci.qringset.domain.AlertEngine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
@@ -37,6 +40,7 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
     val syncing = ble.syncingState
     val syncStatus = ble.syncStatus
     val liveHr = ble.liveHr
+    val liveStatus = ble.liveStatus
 
     // ---- user profile ----
     private val profileStore = UserProfileStore(prefs)
@@ -53,6 +57,14 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var lastInterval by mutableStateOf(prefs.getInt("last_interval", 5))
         private set
+
+    // ---- HR alert settings ----
+    var hrAlertsEnabled by mutableStateOf(prefs.getBoolean("hr_alerts", true))
+        private set
+    var hrSpike by mutableStateOf(prefs.getInt("hr_spike", 120))
+        private set
+    fun setHrAlerts(b: Boolean) { hrAlertsEnabled = b; prefs.edit().putBoolean("hr_alerts", b).apply() }
+    fun updateHrSpike(v: Int) { hrSpike = v.coerceIn(90, 220); prefs.edit().putInt("hr_spike", hrSpike).apply() }
 
     val scanResults = MutableStateFlow<List<ScannedRing>>(emptyList())
     val scanning = MutableStateFlow(false)
@@ -79,7 +91,26 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
     fun readBattery() = ble.readBattery()
 
     fun sync() = ble.sync { result ->
-        viewModelScope.launch { repo.persist(result); repo.exportCsvs() }
+        viewModelScope.launch {
+            repo.persist(result); repo.exportCsvs()
+            if (hrAlertsEnabled) runHrAlerts(result)
+        }
+    }
+
+    private suspend fun runHrAlerts(result: SyncResult) {
+        val windows = repo.workoutsNow().map { it.startEpoch to it.endEpoch }
+        val hr = result.samples.filter { it.metric == MetricType.HR }.map { it.epoch to it.value }
+        val since = System.currentTimeMillis() / 1000 - 3 * 3600
+        AlertEngine.detect(hr, windows, since, hrSpike)?.let { Notifier.show(getApplication(), it.title, it.text) }
+    }
+
+    /** Log an activity window with no live monitoring — shows in history and mutes HR alerts for it. */
+    fun markActivity(type: ActivityType, minutes: Int) {
+        val start = System.currentTimeMillis() / 1000
+        viewModelScope.launch {
+            repo.saveWorkout(WorkoutEntity(type = "${type.label} (manual)", startEpoch = start,
+                endEpoch = start + minutes * 60L, avgHr = 0, maxHr = 0, minHr = 0, samples = 0))
+        }
     }
 
     suspend fun exportCsvs() = repo.exportCsvs()
@@ -100,6 +131,10 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
     fun renameRing(mac: String, name: String) {
         viewModelScope.launch { repo.rememberRing(mac, name) }
     }
+
+    // ---- live HR (also used by resting-HR measurement, no workout) ----
+    fun startLiveHr() = ble.startLiveHr()
+    fun stopLiveHr() = ble.stopLiveHr()
 
     // ---- real-time workout ----
     fun startWorkout(type: ActivityType) {

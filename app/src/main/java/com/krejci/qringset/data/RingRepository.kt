@@ -17,6 +17,7 @@ class RingRepository(private val context: Context) {
     fun sleepCount(): Flow<Int> = dao.sleepCount()
     fun rings(): Flow<List<KnownRingEntity>> = dao.rings()
     fun workouts(): Flow<List<WorkoutEntity>> = dao.workouts()
+    suspend fun workoutsNow(): List<WorkoutEntity> = dao.workoutsNow()
 
     suspend fun rememberRing(mac: String, name: String) =
         dao.upsertRing(KnownRingEntity(mac, name, System.currentTimeMillis() / 1000))

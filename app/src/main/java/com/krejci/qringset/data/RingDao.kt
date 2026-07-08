@@ -43,4 +43,7 @@ interface RingDao {
 
     @Query("SELECT * FROM workouts ORDER BY startEpoch DESC")
     fun workouts(): Flow<List<WorkoutEntity>>
+
+    @Query("SELECT * FROM workouts ORDER BY startEpoch DESC")
+    suspend fun workoutsNow(): List<WorkoutEntity>
 }

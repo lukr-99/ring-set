@@ -13,6 +13,7 @@ import android.content.Context
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import com.krejci.qringset.data.MetricSample
 import com.krejci.qringset.data.MetricType
 import com.krejci.qringset.data.SleepSegment
@@ -44,6 +45,8 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
     val syncStatus = MutableStateFlow("")
     /** Live heart rate (bpm) while a real-time session runs, else null. */
     val liveHr = MutableStateFlow<Int?>(null)
+    /** Human-readable state of the live session ("Connecting…", "Measuring…", errors). */
+    val liveStatus = MutableStateFlow("")
 
     private var gatt: BluetoothGatt? = null
     private var writeChar: BluetoothGattCharacteristic? = null
@@ -55,6 +58,7 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
     private val cccdQueue = ArrayDeque<BluetoothGattDescriptor>()
     private var liveKeepAlive: Runnable? = null
     private var liveOn = false
+    private var liveRequested = false
 
     // sync state
     private enum class Stage { HR, STEPS, SPO2, SLEEP, STRESS, HRV }
@@ -100,6 +104,7 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
         private const val RECONNECT_DELAY_MS = 1_600L
         private const val SYNC_STALL_MS = 8_000L
         private const val LIVE_KEEPALIVE_MS = 2_500L
+        private const val LIVE_TAG = "RingLive"
     }
 
     // ---------- public actions ----------
@@ -151,19 +156,25 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
      * NOTE: exact real-time opcodes vary a little across firmware — verify on-device.
      */
     fun startLiveHr() {
+        liveRequested = true
+        liveStatus.value = "Connecting…"
         withRing {
             liveOn = true
+            liveRequested = false
             liveHr.value = null
+            liveStatus.value = "Measuring — keep the ring snug"
+            Log.d(LIVE_TAG, "start -> ${hex(byteArrayOf(CMD_REALTIME.toByte(), RT_HEART_RATE.toByte(), RT_START.toByte()))}")
             doWrite(packet(byteArrayOf(CMD_REALTIME.toByte(), RT_HEART_RATE.toByte(), RT_START.toByte())))
             scheduleLiveKeepAlive()
         }
     }
 
     fun stopLiveHr() {
-        liveOn = false
+        liveOn = false; liveRequested = false
         liveKeepAlive?.let { handler.removeCallbacks(it) }; liveKeepAlive = null
-        if (ready && writeChar != null) doWrite(packet(byteArrayOf(CMD_REALTIME_STOP.toByte(), RT_HEART_RATE.toByte(), RT_START.toByte())))
+        if (ready && writeChar != null) doWrite(packet(byteArrayOf(CMD_REALTIME_STOP.toByte(), RT_HEART_RATE.toByte(), 0, 0)))
         liveHr.value = null
+        liveStatus.value = ""
     }
 
     private fun scheduleLiveKeepAlive() {
@@ -202,7 +213,11 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
         } catch (e: Exception) { connecting = false; status.value = "Connect error"; return }
         cancelConnectTimeout()
         connectTimeout = Runnable {
-            if (connecting && !ready) { connecting = false; closeGatt(); status.value = "Couldn't reach the ring — wake it & close the QRing app." }
+            if (connecting && !ready) {
+                connecting = false; closeGatt()
+                status.value = "Couldn't reach the ring — wake it & close the QRing app."
+                if (liveRequested) { liveRequested = false; liveStatus.value = "Couldn't reach the ring — wear it & close QRing" }
+            }
         }
         handler.postDelayed(connectTimeout!!, CONNECT_TIMEOUT_MS)
     }
@@ -283,16 +298,25 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
             CMD_STRESS -> handleStressPacket(r)
             CMD_HRV -> handleHrvPacket(r)
             CMD_REALTIME -> handleLivePacket(r)
+            else -> if (liveOn) Log.d(LIVE_TAG, "other <- ${hex(r)}")
         }
     }
 
     private fun handleLivePacket(r: ByteArray) {
-        if (!liveOn || r.size < 4) return
-        // [0x69, type, err, value…] — accept the first plausible bpm byte.
+        if (!liveOn) return
+        Log.d(LIVE_TAG, "recv <- ${hex(r)}")
+        if (r.size < 4) return
+        // [0x69, type, err, value…] on this firmware. err!=0 = sensor not reading yet.
         val err = r[2].toInt() and 0xFF
         val bpm = r[3].toInt() and 0xFF
-        if (err == 0 && bpm in 1..250) liveHr.value = bpm
+        when {
+            err == 0 && bpm in 1..250 -> { liveHr.value = bpm; liveStatus.value = "Live" }
+            bpm in 30..250 -> { liveHr.value = bpm; liveStatus.value = "Live" } // some fw put value with err flag set
+            else -> liveStatus.value = "Adjust the ring — no reading yet"
+        }
     }
+
+    private fun hex(b: ByteArray) = b.joinToString(" ") { "%02x".format(it.toInt() and 0xFF) }
 
     private fun addSample(m: MetricType, epoch: Long, value: Int) { col[m]?.put(epoch, value) }
 
