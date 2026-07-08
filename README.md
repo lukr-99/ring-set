@@ -20,10 +20,10 @@ This app writes the ring's raw BLE command, so you can pick **any interval from
 - **Reconnect** (manual button + "reconnect after setting" toggle) — drops and
   re-establishes the BLE link and re-applies the interval, which makes the ring
   commit the change (otherwise it can revert to its previous value)
-- **Sync data** — pulls the ring's stored **heart-rate and step** logs over BLE and
-  **merges** them into CSVs on the phone (history accumulates across syncs);
-  **Share**/export them, or copy to a PC with [`pull-data.ps1`](pull-data.ps1)
-  (see [AGENTS.md](AGENTS.md))
+- **Sync data** — pulls the ring's stored logs over BLE (**heart rate, steps, SpO2,
+  sleep, stress, HRV**) and **merges** them into CSVs on the phone (history accumulates
+  across syncs); **Share**/export them, or copy to a PC with
+  [`pull-data.ps1`](pull-data.ps1) (see [AGENTS.md](AGENTS.md))
 - Connects directly by MAC, no account/cloud, works offline
 - Material 3 dark UI, adaptive launcher icon
 
@@ -92,6 +92,10 @@ preset again.
 Tap **Sync data** to read the ring's stored logs and merge them into CSVs:
 - `ring_hr.csv` — `timestamp,epoch_s,bpm`
 - `ring_steps.csv` — `timestamp,epoch_s,steps,calories,distance_m` (hourly buckets)
+- `ring_spo2.csv` — `timestamp,epoch_s,spo2` (hourly %)
+- `ring_sleep.csv` — `timestamp,epoch_s,stage,stage_label,duration_min` (per stage; labels: light/deep/rem/awake)
+- `ring_stress.csv` — `timestamp,epoch_s,stress` (30-min)
+- `ring_hrv.csv` — `timestamp,epoch_s,hrv_ms`
 
 The ring only keeps a small rolling buffer, so sync regularly — the merge keeps
 everything you've already pulled.
@@ -101,9 +105,6 @@ Get it off the phone either way:
 - **`pull-data.ps1`** → copies every CSV to a folder on this PC (default
   `Desktop\ring-data`); it uses `adb run-as`, which works because this is a debug
   build. See [AGENTS.md](AGENTS.md) for the manual `adb` commands too.
-
-> SpO2 and sleep syncing are next on the roadmap and will appear as extra CSVs
-> that `pull-data.ps1` picks up automatically.
 
 ## How it works
 
@@ -117,6 +118,12 @@ The ring exposes a Nordic-UART-style GATT service. Commands are 16-byte packets
 | Notify (TX) | `6E400003-B5A3-F393-E0A9-E50E24DCCA9E` |
 | Set interval | `0x16 0x02 0x01 <minutes>` |
 | Read interval | `0x16 0x01` → notify `[0x16, .., enabled, minutes, …]` |
+| HR / steps / stress / HRV logs | `0x15` / `0x43` / `0x37` / `0x39` (tagged, multi-packet) |
+
+SpO2 and sleep use a second **"big data" channel** (service `de5bf728…`, command
+`de5bf72a…`, notify `de5bf729…`): a 7-byte request `[0xbc, type, 01 00 ff 00 ff]`
+(type `0x2a` SpO2 / `0x27` sleep) and a length-framed response reassembled across
+notifications. Protocol reverse-engineered from Gadgetbridge & colmi_r02_client.
 
 The app connects by MAC (`getRemoteDevice(...).connectGatt`), enables notifications
 on the TX characteristic, and writes to RX. Only `BLUETOOTH_CONNECT` (Android 12+)

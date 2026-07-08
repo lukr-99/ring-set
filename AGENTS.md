@@ -6,8 +6,12 @@ Instructions for an automated agent (or a human) to export the data that the
 ## What/where
 - The app reads the ring's stored logs over BLE and writes/merges them into CSVs in its
   private files dir on the phone: `/data/data/com.krejci.qringset/files/`.
-  - `ring_hr.csv` — schema `timestamp,epoch_s,bpm`
-  - `ring_steps.csv` — schema `timestamp,epoch_s,steps,calories,distance_m` (hourly)
+  - `ring_hr.csv` — `timestamp,epoch_s,bpm`
+  - `ring_steps.csv` — `timestamp,epoch_s,steps,calories,distance_m` (hourly)
+  - `ring_spo2.csv` — `timestamp,epoch_s,spo2` (hourly %)
+  - `ring_sleep.csv` — `timestamp,epoch_s,stage,stage_label,duration_min`
+  - `ring_stress.csv` — `timestamp,epoch_s,stress` (30-min)
+  - `ring_hrv.csv` — `timestamp,epoch_s,hrv_ms`
 - `timestamp` is local ISO-8601, `epoch_s` is Unix seconds.
 - Each sync **merges** into the existing CSVs keyed by timestamp, so history accumulates
   across syncs even beyond the ring's small rolling buffer.
@@ -38,6 +42,5 @@ email, Files, etc.) — useful when the phone isn't tethered to this PC.
 ## Notes / gotchas
 - `run-as` only works because this is a **debug** build. A release-signed build would
   need the in-app Share or a `MediaStore`/public-Downloads export instead.
-- Heart rate and steps are implemented. SpO2 and sleep are on the roadmap and will land
-  as additional `*.csv` files that `pull-data.ps1` picks up automatically (it copies
-  every `*.csv` in the app's files dir).
+- All six metrics (HR, steps, SpO2, sleep, stress, HRV) sync in one "Sync data" pass.
+  `pull-data.ps1` copies every `*.csv` in the app's files dir automatically.
