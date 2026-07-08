@@ -37,4 +37,10 @@ interface RingDao {
 
     @Query("SELECT * FROM known_rings ORDER BY lastSeen DESC")
     fun rings(): Flow<List<KnownRingEntity>>
+
+    @Insert
+    suspend fun insertWorkout(w: WorkoutEntity): Long
+
+    @Query("SELECT * FROM workouts ORDER BY startEpoch DESC")
+    fun workouts(): Flow<List<WorkoutEntity>>
 }

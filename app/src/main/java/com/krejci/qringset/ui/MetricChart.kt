@@ -70,13 +70,21 @@ private fun DrawScope.series(points: List<Point>, a: Float, b: Float, color: Col
             val value = (hi - g * (hi - lo) / 3).roundToInt()
             drawContext.canvas.nativeCanvas.drawText(value.toString(), 3f, gy + 7f, paint)
         }
-        // X time labels
+        // X time labels — several ticks across the window, not just the ends
         val span = seg.last().epoch - seg.first().epoch
         val fmt = SimpleDateFormat(if (span < 2 * 86400) "HH:mm" else "MMM d", Locale.US)
-        val startStr = fmt.format(Date(seg.first().epoch * 1000))
-        val endStr = fmt.format(Date(seg.last().epoch * 1000))
-        drawContext.canvas.nativeCanvas.drawText(startStr, leftInset, size.height - 3f, paint)
-        drawContext.canvas.nativeCanvas.drawText(endStr, size.width - rightPad - paint.measureText(endStr), size.height - 3f, paint)
+        val ticks = 4
+        for (t in 0 until ticks) {
+            val idx = (t.toFloat() / (ticks - 1) * (seg.size - 1)).roundToInt().coerceIn(0, seg.size - 1)
+            val label = fmt.format(Date(seg[idx].epoch * 1000))
+            val w = paint.measureText(label)
+            val x = when (t) {
+                0 -> leftInset
+                ticks - 1 -> size.width - rightPad - w
+                else -> px(idx) - w / 2f
+            }.coerceIn(0f, size.width - w)
+            drawContext.canvas.nativeCanvas.drawText(label, x, size.height - 3f, paint)
+        }
     }
 
     val fill = Path().apply {

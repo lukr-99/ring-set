@@ -42,6 +42,8 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
     val interval = MutableStateFlow<IntervalInfo?>(null)
     val syncingState = MutableStateFlow(false)
     val syncStatus = MutableStateFlow("")
+    /** Live heart rate (bpm) while a real-time session runs, else null. */
+    val liveHr = MutableStateFlow<Int?>(null)
 
     private var gatt: BluetoothGatt? = null
     private var writeChar: BluetoothGattCharacteristic? = null
@@ -51,6 +53,8 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
     private var pending: (() -> Unit)? = null
     private var connectTimeout: Runnable? = null
     private val cccdQueue = ArrayDeque<BluetoothGattDescriptor>()
+    private var liveKeepAlive: Runnable? = null
+    private var liveOn = false
 
     // sync state
     private enum class Stage { HR, STEPS, SPO2, SLEEP, STRESS, HRV }
@@ -87,9 +91,15 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
         private const val CMD_BIG_DATA = 0xBC
         private const val BD_SPO2 = 0x2A
         private const val BD_SLEEP = 0x27
+        private const val CMD_REALTIME = 0x69      // start/continue a live reading
+        private const val CMD_REALTIME_STOP = 0x6A // stop a live reading
+        private const val RT_HEART_RATE = 0x01     // reading type: heart rate
+        private const val RT_START = 0x01
+        private const val RT_CONTINUE = 0x03
         private const val CONNECT_TIMEOUT_MS = 12_000L
         private const val RECONNECT_DELAY_MS = 1_600L
         private const val SYNC_STALL_MS = 8_000L
+        private const val LIVE_KEEPALIVE_MS = 2_500L
     }
 
     // ---------- public actions ----------
@@ -133,6 +143,38 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
             syncOffsets.clear(); syncOffsets.addAll(listOf(0, -1, -2))
             requestNextDay()
         }
+    }
+
+    /**
+     * Start a real-time heart-rate stream. The ring needs a periodic "continue" nudge or it
+     * stops sending, so we re-arm a keep-alive until [stopLiveHr]. Values arrive on [liveHr].
+     * NOTE: exact real-time opcodes vary a little across firmware — verify on-device.
+     */
+    fun startLiveHr() {
+        withRing {
+            liveOn = true
+            liveHr.value = null
+            doWrite(packet(byteArrayOf(CMD_REALTIME.toByte(), RT_HEART_RATE.toByte(), RT_START.toByte())))
+            scheduleLiveKeepAlive()
+        }
+    }
+
+    fun stopLiveHr() {
+        liveOn = false
+        liveKeepAlive?.let { handler.removeCallbacks(it) }; liveKeepAlive = null
+        if (ready && writeChar != null) doWrite(packet(byteArrayOf(CMD_REALTIME_STOP.toByte(), RT_HEART_RATE.toByte(), RT_START.toByte())))
+        liveHr.value = null
+    }
+
+    private fun scheduleLiveKeepAlive() {
+        liveKeepAlive?.let { handler.removeCallbacks(it) }
+        liveKeepAlive = Runnable {
+            if (liveOn && ready) {
+                doWrite(packet(byteArrayOf(CMD_REALTIME.toByte(), RT_HEART_RATE.toByte(), RT_CONTINUE.toByte())))
+                scheduleLiveKeepAlive()
+            }
+        }
+        handler.postDelayed(liveKeepAlive!!, LIVE_KEEPALIVE_MS)
     }
 
     fun disconnect() = closeGatt()
@@ -240,7 +282,16 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
             CMD_STEPS -> handleStepsPacket(r)
             CMD_STRESS -> handleStressPacket(r)
             CMD_HRV -> handleHrvPacket(r)
+            CMD_REALTIME -> handleLivePacket(r)
         }
+    }
+
+    private fun handleLivePacket(r: ByteArray) {
+        if (!liveOn || r.size < 4) return
+        // [0x69, type, err, value…] — accept the first plausible bpm byte.
+        val err = r[2].toInt() and 0xFF
+        val bpm = r[3].toInt() and 0xFF
+        if (err == 0 && bpm in 1..250) liveHr.value = bpm
     }
 
     private fun addSample(m: MetricType, epoch: Long, value: Int) { col[m]?.put(epoch, value) }
@@ -456,6 +507,7 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
     @SuppressLint("MissingPermission")
     private fun closeGatt() {
         cancelConnectTimeout()
+        liveOn = false; liveKeepAlive?.let { handler.removeCallbacks(it) }; liveKeepAlive = null; liveHr.value = null
         try { gatt?.disconnect(); gatt?.close() } catch (_: Exception) {}
         gatt = null; writeChar = null; v2WriteChar = null; ready = false; connecting = false; conn.value = Conn.DISCONNECTED
     }

@@ -23,6 +23,15 @@ enum class TimeRange(val label: String, val seconds: Long) {
  * Statistics over a metric's values. New statistics (resting HR, time-in-range, trend, …)
  * become new functions here — the UI reads whatever this exposes without changing.
  */
+/** One day's roll-up of a metric. */
+data class DayStat(val dayEpoch: Long, val avg: Double, val min: Int, val max: Int, val count: Int)
+
+/** Minutes spent in each sleep stage over the loaded sleep data. */
+data class SleepSummary(val totalMin: Int, val deepMin: Int, val remMin: Int, val lightMin: Int, val awakeMin: Int) {
+    val hours: Float get() = totalMin / 60f
+    companion object { val EMPTY = SleepSummary(0, 0, 0, 0, 0) }
+}
+
 object StatsEngine {
     fun summarize(values: List<Int>): MetricSummary {
         if (values.isEmpty()) return MetricSummary.EMPTY
@@ -33,5 +42,49 @@ object StatsEngine {
             max = values.max(),
             latest = values.last(),
         )
+    }
+
+    /**
+     * Resting heart rate estimate: the average of the lowest ~10% of readings (a simple,
+     * robust proxy for true resting HR without needing continuous overnight data).
+     */
+    fun restingHr(values: List<Int>): Int? {
+        if (values.isEmpty()) return null
+        val sorted = values.sorted()
+        val n = (sorted.size / 10).coerceAtLeast(1)
+        return sorted.take(n).average().toInt()
+    }
+
+    /** Fraction of readings that fall within [lo, hi] inclusive (0f..1f). */
+    fun timeInRange(values: List<Int>, lo: Int, hi: Int): Float {
+        if (values.isEmpty()) return 0f
+        return values.count { it in lo..hi }.toFloat() / values.size
+    }
+
+    /** Group (epochSeconds, value) points into per-calendar-day roll-ups, most recent last. */
+    fun daily(points: List<Pair<Long, Int>>): List<DayStat> {
+        if (points.isEmpty()) return emptyList()
+        val byDay = points.groupBy { it.first / 86_400L }
+        return byDay.toSortedMap().map { (day, pts) ->
+            val vs = pts.map { it.second }
+            DayStat(day * 86_400L, vs.average(), vs.min(), vs.max(), vs.size)
+        }
+    }
+
+    /**
+     * Sleep-stage totals. Stage codes: 2=light 3=deep 4=rem 5=awake. Pass (stage, minutes).
+     * By default only counts the most recent night (segments within 24h of the latest one).
+     */
+    fun sleepSummary(segments: List<Triple<Long, Int, Int>>, lastNightOnly: Boolean = true): SleepSummary {
+        if (segments.isEmpty()) return SleepSummary.EMPTY
+        val use = if (lastNightOnly) {
+            val latest = segments.maxOf { it.first }
+            segments.filter { it.first >= latest - 20 * 3600 }
+        } else segments
+        var deep = 0; var rem = 0; var light = 0; var awake = 0
+        for ((_, stage, mins) in use) when (stage) {
+            2 -> light += mins; 3 -> deep += mins; 4 -> rem += mins; 5 -> awake += mins
+        }
+        return SleepSummary(deep + rem + light, deep, rem, light, awake)
     }
 }

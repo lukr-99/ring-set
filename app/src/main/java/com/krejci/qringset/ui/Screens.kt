@@ -20,22 +20,31 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Adjust
+import androidx.compose.material.icons.rounded.Dashboard
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.FitnessCenter
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.ShowChart
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,10 +55,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.krejci.qringset.data.KnownRingEntity
 import com.krejci.qringset.data.MetricType
 import com.krejci.qringset.data.Point
 import com.krejci.qringset.ble.Conn
@@ -59,25 +70,31 @@ import kotlin.math.floor
 import kotlin.math.roundToInt
 
 enum class Screen(val label: String, val icon: ImageVector) {
+    OVERVIEW("Home", Icons.Rounded.Dashboard),
     STATS("Stats", Icons.Rounded.ShowChart),
+    ACTIVITY("Activity", Icons.Rounded.FitnessCenter),
+    DATA("Data", Icons.Rounded.Sync),
     RING("Ring", Icons.Rounded.Adjust),
     CONTROL("Control", Icons.Rounded.Tune),
-    DATA("Data", Icons.Rounded.Sync),
+    PROFILE("You", Icons.Rounded.Person),
 }
 
 @Composable
 fun App(vm: RingViewModel, onExportShare: () -> Unit, onScan: () -> Unit) {
-    var screen by remember { mutableStateOf(Screen.STATS) }
+    var screen by remember { mutableStateOf(Screen.OVERVIEW) }
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-                .padding(start = 18.dp, end = 18.dp, top = 22.dp, bottom = 104.dp)
+                .padding(start = 18.dp, end = 18.dp, top = 40.dp, bottom = 104.dp)
         ) {
             when (screen) {
+                Screen.OVERVIEW -> OverviewScreen(vm)
                 Screen.STATS -> StatsScreen(vm)
+                Screen.ACTIVITY -> ActivityScreen(vm)
+                Screen.DATA -> DataScreen(vm, onExportShare)
                 Screen.RING -> RingScreen(vm, onScan)
                 Screen.CONTROL -> ControlScreen(vm)
-                Screen.DATA -> DataScreen(vm, onExportShare)
+                Screen.PROFILE -> ProfileScreen(vm)
             }
         }
         FloatingNav(screen, { screen = it }, Modifier.align(Alignment.BottomCenter).padding(bottom = 20.dp))
@@ -93,19 +110,25 @@ private fun FloatingNav(current: Screen, onSelect: (Screen) -> Unit, modifier: M
         tonalElevation = 3.dp,
         shadowElevation = 12.dp,
     ) {
-        Row(Modifier.padding(6.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        // Selected item shows a labelled pill; the rest are equal-width icons — so no single
+        // item's pill is wider than the others.
+        Row(Modifier.padding(5.dp), horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.CenterVertically) {
             for (s in Screen.entries) {
                 val on = s == current
-                Column(
+                val tint = if (on) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                Row(
                     Modifier.clip(CircleShape)
                         .background(if (on) MaterialTheme.colorScheme.primary else Color.Transparent)
                         .clickable { onSelect(s) }
-                        .padding(horizontal = 15.dp, vertical = 9.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
+                        .padding(horizontal = if (on) 12.dp else 9.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    val tint = if (on) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                    Icon(s.icon, s.label, tint = tint, modifier = Modifier.size(22.dp))
-                    Text(s.label, color = tint, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
+                    Icon(s.icon, s.label, tint = tint, modifier = Modifier.size(20.dp))
+                    if (on) {
+                        Spacer(Modifier.width(6.dp))
+                        Text(s.label, color = tint, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    }
                 }
             }
         }
@@ -147,8 +170,10 @@ fun StatsScreen(vm: RingViewModel) {
     val points = remember(entities) { entities.map { Point(it.epoch, it.value.toFloat()) } }
     val color = metricColor(metric)
 
-    Text("Insights", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onBackground)
-    Text("${metric.label} · ${points.size} readings", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
+    ScreenHeader("Insights", "${metric.label} · ${points.size} readings",
+        "Charts of what the ring recorded. Tap a metric to switch. Drag the small window under " +
+            "the graph to scrub through time, and pull its edges to zoom in. The tiles below show " +
+            "the average, min, max and latest value for whatever slice is currently in view.")
 
     Spacer(Modifier.height(14.dp))
     MetricChips(metric) { metric = it; window = 0f to 1f }
@@ -198,8 +223,10 @@ private fun StatTile(k: String, v: String, u: String, color: Color, modifier: Mo
 @Composable
 fun ControlScreen(vm: RingViewModel) {
     val status by vm.status.collectAsStateWithLifecycle()
-    Text("Control", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onBackground)
-    Text("Heart-rate logging interval", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
+    ScreenHeader("Control", "Heart-rate logging interval",
+        "How often the ring records a heart-rate reading in the background. Lower = more detail " +
+            "but more battery use. The ring can drift back to its old value after you change it — " +
+            "leave \"Reconnect after setting\" on so the new interval sticks.")
 
     Spacer(Modifier.height(14.dp))
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)), shape = RoundedCornerShape(18.dp)) {
@@ -214,6 +241,27 @@ fun ControlScreen(vm: RingViewModel) {
         for (row in presets.chunked(3)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 for (p in row) Preset(p, p == vm.lastInterval, Modifier.weight(1f)) { vm.setInterval(p) }
+            }
+        }
+    }
+
+    Label("Custom interval")
+    var custom by remember { mutableStateOf("") }
+    val customMin = custom.toIntOrNull()
+    val customOk = customMin != null && customMin in 1..255
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(16.dp)) {
+        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedTextField(
+                value = custom,
+                onValueChange = { custom = it.filter(Char::isDigit).take(3) },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                label = { Text("Minutes (1–255)") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            )
+            Button(onClick = { if (customOk) { vm.setInterval(customMin!!); custom = "" } }, enabled = customOk) {
+                Text("Set")
             }
         }
     }
@@ -255,9 +303,10 @@ private fun Preset(min: Int, selected: Boolean, modifier: Modifier, onClick: () 
 fun DataScreen(vm: RingViewModel, onExportShare: () -> Unit) {
     val syncing by vm.syncing.collectAsStateWithLifecycle()
     val syncStatus by vm.syncStatus.collectAsStateWithLifecycle()
-    Text("Data", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onBackground)
-    Text(if (syncStatus.isBlank()) "Sync pulls the ring's logs into the app" else syncStatus,
-        color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
+    ScreenHeader("Data", if (syncStatus.isBlank()) "Sync pulls the ring's logs into the app" else syncStatus,
+        "The ring stores several days of readings on-device. \"Sync now\" pulls heart rate, steps, " +
+            "SpO₂, sleep, stress and HRV into the app and keeps CSV copies you can share or pull " +
+            "off with pull-data.ps1.")
 
     Label("Stored")
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(16.dp)) {
@@ -298,9 +347,12 @@ fun RingScreen(vm: RingViewModel, onScan: () -> Unit) {
     val rings by vm.rings().collectAsStateWithLifecycle(emptyList())
     val scanResults by vm.scanResults.collectAsStateWithLifecycle()
     val scanning by vm.scanning.collectAsStateWithLifecycle()
+    var renaming by remember { mutableStateOf<KnownRingEntity?>(null) }
 
-    Text("My ring", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onBackground)
-    Text(vm.activeMac(), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+    ScreenHeader("My ring", vm.activeMac(),
+        "Your ring and its battery. Tap a ring in the list to make it active, use the pencil to " +
+            "give it a name, or scan to add another ring nearby. Only one ring can be connected " +
+            "at a time.")
 
     Spacer(Modifier.height(14.dp))
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(18.dp)) {
@@ -336,6 +388,9 @@ fun RingScreen(vm: RingViewModel, onScan: () -> Unit) {
                     }
                     if (active) Text("active", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     else Text("use", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                    IconButton(onClick = { renaming = r }) {
+                        Icon(Icons.Rounded.Edit, "Rename", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                    }
                 }
             }
         }
@@ -362,4 +417,31 @@ fun RingScreen(vm: RingViewModel, onScan: () -> Unit) {
     OutlinedButton(onClick = onScan, enabled = !scanning, modifier = Modifier.fillMaxWidth()) {
         Text(if (scanning) "Scanning…" else "+ Add a ring nearby")
     }
+
+    renaming?.let { r ->
+        RenameDialog(r.name, onDismiss = { renaming = null }) { newName ->
+            vm.renameRing(r.mac, newName); renaming = null
+        }
+    }
+}
+
+@Composable
+private fun RenameDialog(current: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var name by remember { mutableStateOf(current) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = { if (name.isNotBlank()) onSave(name.trim()) }, enabled = name.isNotBlank()) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        title = { Text("Rename ring") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it.take(30) },
+                singleLine = true,
+                label = { Text("Name") },
+            )
+        },
+    )
 }

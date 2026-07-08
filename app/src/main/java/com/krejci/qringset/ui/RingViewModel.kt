@@ -13,8 +13,12 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.krejci.qringset.BuildConfig
 import com.krejci.qringset.ble.RingBle
+import com.krejci.qringset.data.ActivityType
 import com.krejci.qringset.data.MetricType
 import com.krejci.qringset.data.RingRepository
+import com.krejci.qringset.data.UserProfile
+import com.krejci.qringset.data.UserProfileStore
+import com.krejci.qringset.data.WorkoutEntity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
@@ -32,6 +36,18 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
     val interval = ble.interval
     val syncing = ble.syncingState
     val syncStatus = ble.syncStatus
+    val liveHr = ble.liveHr
+
+    // ---- user profile ----
+    private val profileStore = UserProfileStore(prefs)
+    val profile = MutableStateFlow(profileStore.load())
+    fun saveProfile(p: UserProfile) { profileStore.save(p); profile.value = p }
+
+    // ---- real-time workout session ----
+    val workoutActive = MutableStateFlow(false)
+    val workoutSamples = MutableStateFlow<List<Int>>(emptyList())
+    val workoutStart = MutableStateFlow(0L)
+    private var workoutType = ActivityType.WORKOUT
 
     var autoReconnect by mutableStateOf(prefs.getBoolean("auto_reconnect", false))
         private set
@@ -43,6 +59,10 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         viewModelScope.launch { repo.rememberRing(ble.mac, "R04") }
+        // Append live HR into the current workout while one is running.
+        viewModelScope.launch {
+            ble.liveHr.collect { v -> if (workoutActive.value && v != null) workoutSamples.value = workoutSamples.value + v }
+        }
     }
 
     fun activeMac(): String = ble.mac
@@ -66,14 +86,47 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
 
     fun samples(m: MetricType) = repo.samples(m)
     fun count(m: MetricType) = repo.count(m)
+    fun sleep() = repo.sleep()
     fun sleepCount() = repo.sleepCount()
     fun rings() = repo.rings()
+    fun workouts() = repo.workouts()
 
     fun setActiveRing(mac: String, name: String) {
         prefs.edit().putString("active_mac", mac).apply()
         ble.disconnect(); ble.mac = mac
         viewModelScope.launch { repo.rememberRing(mac, name) }
     }
+
+    fun renameRing(mac: String, name: String) {
+        viewModelScope.launch { repo.rememberRing(mac, name) }
+    }
+
+    // ---- real-time workout ----
+    fun startWorkout(type: ActivityType) {
+        workoutType = type
+        workoutSamples.value = emptyList()
+        workoutStart.value = System.currentTimeMillis() / 1000
+        workoutActive.value = true
+        ble.startLiveHr()
+    }
+
+    fun stopWorkout() {
+        ble.stopLiveHr()
+        if (!workoutActive.value) return
+        workoutActive.value = false
+        val s = workoutSamples.value
+        if (s.isNotEmpty()) {
+            val w = WorkoutEntity(
+                type = workoutType.label,
+                startEpoch = workoutStart.value,
+                endEpoch = System.currentTimeMillis() / 1000,
+                avgHr = s.average().toInt(), maxHr = s.max(), minHr = s.min(), samples = s.size,
+            )
+            viewModelScope.launch { repo.saveWorkout(w) }
+        }
+    }
+
+    override fun onCleared() { ble.stopLiveHr() }
 
     // ---- scanning for other rings ----
     private val scanCb = object : ScanCallback() {
