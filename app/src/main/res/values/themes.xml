@@ -1,9 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.QRingSet" parent="Theme.Material3.Dark.NoActionBar">
-        <item name="colorPrimary">@color/accent</item>
-        <item name="colorOnPrimary">@color/accentDark</item>
-        <item name="colorSecondary">@color/accent</item>
+    <!-- Window/base theme only; the real UI theme is Compose (RingSetTheme). -->
+    <style name="Theme.QRingSet" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/bg0</item>
         <item name="android:statusBarColor">@color/bg0</item>
         <item name="android:navigationBarColor">@color/bg0</item>
         <item name="android:windowLightStatusBar">false</item>

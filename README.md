@@ -129,10 +129,25 @@ The app connects by MAC (`getRemoteDevice(...).connectGatt`), enables notificati
 on the TX characteristic, and writes to RX. Only `BLUETOOTH_CONNECT` (Android 12+)
 is required — no location, no scanning.
 
+## App structure
+
+A tabbed **Jetpack Compose** app with a floating navigation bar:
+
+- **Stats** — scrub-to-zoom line charts per metric (custom Compose Canvas) with live
+  average / min / max / latest tiles over the visible window.
+- **Ring** — battery %, connection, device info, and multiple rings (scan + switch).
+- **Control** — interval presets + reconnect.
+- **Data** — sync all metrics, per-metric counts, export/share CSVs.
+
+Data flows `RingBle` (BLE) → `RingRepository` → **Room** (queryable store) → `RingViewModel`
+→ Compose. Stats logic lives in `domain/StatsEngine`, so new statistics slot in without
+touching the UI. CSV export still writes the same `ring_*.csv` files for `pull-data.ps1`.
+
 ## Tech
 
-Kotlin · Android Views + Material 3 · view binding · no third-party BLE library.
-Gradle 8.9 · AGP 8.5.2 · compileSdk 35 · minSdk 26 (Android 8.0+).
+Kotlin · Jetpack Compose + Material 3 · Room · Coroutines/Flow · MVVM · custom Canvas charts.
+Kotlin 2.0.21 · Gradle 8.9 · AGP 8.5.2 · compileSdk 35 · minSdk 26 (Android 8.0+).
+(Charts are a custom Canvas for now; Vico is the plan once the ecosystem settles on AGP 9.)
 
 ## Credits
 
