@@ -170,8 +170,10 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
     private fun onReady() {
         cancelConnectTimeout(); ready = true; connecting = false; conn.value = Conn.CONNECTED
         status.value = "Connected ✓"
-        readBatteryNow()
-        runPending()
+        // Run on the main handler so the sync accumulator and the (also main-posted) BLE
+        // responses share one thread. Battery only when idle, to not collide with the sync's
+        // first request.
+        handler.post { if (pending != null) runPending() else readBatteryNow() }
     }
 
     @SuppressLint("MissingPermission")
@@ -208,10 +210,10 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
         }
 
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, s: Int) = writeNextCccd(g)
-        override fun onCharacteristicChanged(g: BluetoothGatt, ch: BluetoothGattCharacteristic, v: ByteArray) = route(ch.uuid, v)
+        override fun onCharacteristicChanged(g: BluetoothGatt, ch: BluetoothGattCharacteristic, v: ByteArray) = route(ch.uuid, v.copyOf())
         @Deprecated("Deprecated in API 33")
         @Suppress("DEPRECATION")
-        override fun onCharacteristicChanged(g: BluetoothGatt, ch: BluetoothGattCharacteristic) { route(ch.uuid, ch.value ?: return) }
+        override fun onCharacteristicChanged(g: BluetoothGatt, ch: BluetoothGattCharacteristic) { route(ch.uuid, (ch.value ?: return).copyOf()) }
     }
 
     @SuppressLint("MissingPermission")
@@ -222,7 +224,8 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
         else { @Suppress("DEPRECATION") run { d.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE; g.writeDescriptor(d) } }
     }
 
-    private fun route(uuid: UUID, v: ByteArray) { if (uuid == NOTIFY_V2_UUID) onBigData(v) else handleResponse(v) }
+    // Post to the main handler so all response parsing runs on one thread (see onReady).
+    private fun route(uuid: UUID, v: ByteArray) { handler.post { if (uuid == NOTIFY_V2_UUID) onBigData(v) else handleResponse(v) } }
 
     // ---------- V1 responses ----------
 
@@ -397,8 +400,9 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
         }
         val sleep = sleepCol.map { SleepSegment(it.key, it.value[0], it.value[1]) }
         val result = SyncResult(samples, sleep, counts, sleep.size)
-        syncStatus.value = "Synced ✓  " + MetricType.entries.joinToString("·") { "${it.label.take(2)} ${counts[it] ?: 0}" } + " · Sl ${sleep.size}"
+        syncStatus.value = "Synced ✓  " + MetricType.entries.joinToString("·") { "${it.short} ${counts[it] ?: 0}" } + " · Sleep ${sleep.size}"
         handler.post { onSyncDone?.invoke(result) }
+        handler.postDelayed({ if (conn.value == Conn.CONNECTED) readBatteryNow() }, 500)
     }
 
     private fun scheduleStall() { cancelStall(); syncTimeout = Runnable { if (syncing) stageTimedOut() }; handler.postDelayed(syncTimeout!!, SYNC_STALL_MS) }

@@ -27,49 +27,70 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.krejci.qringset.data.Point
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
-private fun DrawScope.series(points: List<Point>, a: Float, b: Float, color: Color, main: Boolean) {
+private fun DrawScope.series(points: List<Point>, a: Float, b: Float, color: Color, main: Boolean, axisArgb: Int) {
     val n = points.size
     val i0 = floor(a * (n - 1)).toInt().coerceIn(0, n - 1)
     val i1 = ceil(b * (n - 1)).toInt().coerceIn(0, n - 1)
     val seg = points.subList(i0, (i1 + 1).coerceAtMost(n))
     if (seg.size < 2) return
-    var lo = seg.minOf { it.value }; var hi = seg.maxOf { it.value }
-    val pad = ((hi - lo) * 0.22f).coerceAtLeast(1f); lo -= pad; hi += pad
-    val padL = if (main) 6f else 1f
-    val topPad = if (main) 8f else 5f
-    fun px(i: Int) = padL + i.toFloat() / (seg.size - 1) * (size.width - padL * 2)
-    fun py(v: Float) = size.height - topPad - (v - lo) / (hi - lo) * (size.height - topPad * 2)
+    val rawLo = seg.minOf { it.value }; val rawHi = seg.maxOf { it.value }
+    val pad = ((rawHi - rawLo) * 0.15f).coerceAtLeast(1f)
+    val lo = rawLo - pad; val hi = rawHi + pad
+
+    val leftInset = if (main) 42f else 1f
+    val rightPad = if (main) 8f else 1f
+    val topPad = if (main) 10f else 5f
+    val bottomInset = if (main) 18f else 0f
+    val plotTop = topPad
+    val plotBottom = size.height - bottomInset
+    fun px(i: Int) = leftInset + i.toFloat() / (seg.size - 1) * (size.width - leftInset - rightPad)
+    fun py(v: Float) = plotBottom - (v - lo) / (hi - lo) * (plotBottom - plotTop)
 
     if (main) {
         val grid = Color.White.copy(alpha = 0.06f)
+        val paint = android.graphics.Paint().apply { isAntiAlias = true; this.color = axisArgb; textSize = 22f }
         for (g in 0..3) {
-            val y = topPad + g * (size.height - topPad * 2) / 3
-            drawLine(grid, Offset(0f, y), Offset(size.width, y), 1f)
+            val gy = plotTop + g * (plotBottom - plotTop) / 3
+            drawLine(grid, Offset(leftInset, gy), Offset(size.width, gy), 1f)
+            val value = (hi - g * (hi - lo) / 3).roundToInt()
+            drawContext.canvas.nativeCanvas.drawText(value.toString(), 3f, gy + 7f, paint)
         }
+        // X time labels
+        val span = seg.last().epoch - seg.first().epoch
+        val fmt = SimpleDateFormat(if (span < 2 * 86400) "HH:mm" else "MMM d", Locale.US)
+        val startStr = fmt.format(Date(seg.first().epoch * 1000))
+        val endStr = fmt.format(Date(seg.last().epoch * 1000))
+        drawContext.canvas.nativeCanvas.drawText(startStr, leftInset, size.height - 3f, paint)
+        drawContext.canvas.nativeCanvas.drawText(endStr, size.width - rightPad - paint.measureText(endStr), size.height - 3f, paint)
     }
+
     val fill = Path().apply {
-        moveTo(px(0), size.height)
+        moveTo(px(0), plotBottom)
         seg.forEachIndexed { i, p -> lineTo(px(i), py(p.value)) }
-        lineTo(px(seg.size - 1), size.height); close()
+        lineTo(px(seg.size - 1), plotBottom); close()
     }
-    drawPath(fill, Brush.verticalGradient(listOf(color.copy(alpha = 0.34f), color.copy(alpha = 0f))))
-    val line = Path().apply {
-        seg.forEachIndexed { i, p -> if (i == 0) moveTo(px(i), py(p.value)) else lineTo(px(i), py(p.value)) }
-    }
-    drawPath(line, color, style = androidx.compose.ui.graphics.drawscope.Stroke(width = if (main) 3f else 1.6f))
+    drawPath(fill, Brush.verticalGradient(listOf(color.copy(alpha = 0.34f), color.copy(alpha = 0f)), startY = plotTop, endY = plotBottom))
+    val line = Path().apply { seg.forEachIndexed { i, p -> if (i == 0) moveTo(px(i), py(p.value)) else lineTo(px(i), py(p.value)) } }
+    drawPath(line, color, style = Stroke(width = if (main) 3f else 1.6f))
     if (main) {
         val lx = px(seg.size - 1); val ly = py(seg.last().value)
         drawCircle(color, 4.5f, Offset(lx, ly))
-        drawCircle(color.copy(alpha = 0.4f), 9f, Offset(lx, ly), style = androidx.compose.ui.graphics.drawscope.Stroke(2f))
+        drawCircle(color.copy(alpha = 0.4f), 9f, Offset(lx, ly), style = Stroke(2f))
     }
 }
 
@@ -86,9 +107,10 @@ fun MetricChart(
         }
         return
     }
+    val axisArgb = MaterialTheme.colorScheme.onSurfaceVariant.toArgb()
     val win = rememberUpdatedState(window)
     Column {
-        Canvas(Modifier.fillMaxWidth().height(190.dp)) { series(points, window.first, window.second, color, true) }
+        Canvas(Modifier.fillMaxWidth().height(200.dp)) { series(points, window.first, window.second, color, true, axisArgb) }
         Spacer(Modifier.height(8.dp))
         BoxWithConstraints(
             Modifier.fillMaxWidth().height(50.dp).clip(RoundedCornerShape(12.dp))
@@ -96,7 +118,7 @@ fun MetricChart(
         ) {
             val wpx = constraints.maxWidth.toFloat()
             val density = LocalDensity.current
-            Canvas(Modifier.fillMaxSize()) { series(points, 0f, 1f, color.copy(alpha = 0.55f), false) }
+            Canvas(Modifier.fillMaxSize()) { series(points, 0f, 1f, color.copy(alpha = 0.55f), false, axisArgb) }
             val a = window.first; val b = window.second
             Box(
                 Modifier

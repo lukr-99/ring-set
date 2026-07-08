@@ -118,20 +118,20 @@ private fun FloatingNav(current: Screen, onSelect: (Screen) -> Unit, modifier: M
 
 @Composable
 private fun MetricChips(selected: MetricType, onSelect: (MetricType) -> Unit) {
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    // Fitted tab row — all metrics share the width, no sideways scrolling.
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         for (m in MetricType.entries) {
             val on = m == selected
             val c = metricColor(m)
-            Row(
-                Modifier.clip(CircleShape)
-                    .background(if (on) c.copy(alpha = 0.16f) else Color.Transparent)
-                    .border(1.dp, if (on) c else MaterialTheme.colorScheme.outline, CircleShape)
-                    .clickable { onSelect(m) }.padding(horizontal = 13.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            Box(
+                Modifier.weight(1f).clip(RoundedCornerShape(12.dp))
+                    .background(if (on) c.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceVariant)
+                    .border(1.dp, if (on) c else Color.Transparent, RoundedCornerShape(12.dp))
+                    .clickable { onSelect(m) }.padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center,
             ) {
-                Box(Modifier.size(8.dp).clip(CircleShape).background(c))
-                Spacer(Modifier.width(7.dp))
-                Text(m.label, color = if (on) c else MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text(m.short, color = if (on) c else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
             }
         }
     }
