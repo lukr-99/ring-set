@@ -382,6 +382,7 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
     }
 
     private fun onBigData(v: ByteArray) {
+        if (liveOn) Log.d(LIVE_TAG, "v2 <- ${hex(v)}")
         if (!syncing) return
         scheduleStall()
         bigData.write(v)

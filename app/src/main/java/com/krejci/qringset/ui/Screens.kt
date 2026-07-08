@@ -97,38 +97,39 @@ fun App(vm: RingViewModel, onExportShare: () -> Unit, onScan: () -> Unit) {
                 Screen.PROFILE -> ProfileScreen(vm)
             }
         }
-        FloatingNav(screen, { screen = it }, Modifier.align(Alignment.BottomCenter).padding(bottom = 20.dp))
+        FloatingNav(screen, { screen = it },
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = 14.dp, end = 14.dp, bottom = 20.dp))
     }
 }
 
 @Composable
 private fun FloatingNav(current: Screen, onSelect: (Screen) -> Unit, modifier: Modifier) {
+    // Full-width bar with equal-width columns so it never changes size between tabs. The selected
+    // item is tinted with a subtle highlight behind its icon; labels are always shown.
     Surface(
         modifier = modifier,
-        shape = CircleShape,
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+        shape = RoundedCornerShape(26.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
         tonalElevation = 3.dp,
         shadowElevation = 12.dp,
     ) {
-        // Selected item shows a labelled pill; the rest are equal-width icons — so no single
-        // item's pill is wider than the others.
-        Row(Modifier.padding(5.dp), horizontalArrangement = Arrangement.spacedBy(2.dp),
+        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
             for (s in Screen.entries) {
                 val on = s == current
-                val tint = if (on) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                Row(
-                    Modifier.clip(CircleShape)
-                        .background(if (on) MaterialTheme.colorScheme.primary else Color.Transparent)
-                        .clickable { onSelect(s) }
-                        .padding(horizontal = if (on) 12.dp else 9.dp, vertical = 9.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                val tint = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                Column(
+                    Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).clickable { onSelect(s) }.padding(vertical = 3.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Icon(s.icon, s.label, tint = tint, modifier = Modifier.size(20.dp))
-                    if (on) {
-                        Spacer(Modifier.width(6.dp))
-                        Text(s.label, color = tint, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                    }
+                    Box(
+                        Modifier.clip(CircleShape)
+                            .background(if (on) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else Color.Transparent)
+                            .padding(horizontal = 14.dp, vertical = 5.dp),
+                    ) { Icon(s.icon, s.label, tint = tint, modifier = Modifier.size(20.dp)) }
+                    Spacer(Modifier.height(2.dp))
+                    Text(s.label, color = tint, fontSize = 9.5.sp, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium,
+                        maxLines = 1, softWrap = false)
                 }
             }
         }
