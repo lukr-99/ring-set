@@ -57,6 +57,12 @@ class MainActivity : AppCompatActivity() {
     private var curDayStart = 0L
     private var curDayIdx = 0
 
+    private enum class Stage { HR, STEPS }
+    private var stage = Stage.HR
+    private val stepsOffsets = ArrayDeque<Int>()            // day counts still to request (0 = today)
+    private val stepsHistory = TreeMap<Long, IntArray>()    // epochSeconds -> [steps, calories, distance_m]
+    private var newStepsCount = 0
+
     companion object {
         // Set via RING_MAC env var or ring.mac in local.properties at build time.
         private val MAC = BuildConfig.RING_MAC
@@ -66,7 +72,9 @@ class MainActivity : AppCompatActivity() {
         private val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         private const val CMD_HR_LOG = 0x16
         private const val CMD_HR_READ = 0x15
+        private const val CMD_STEPS = 0x43
         private const val HR_CSV = "ring_hr.csv"
+        private const val STEPS_CSV = "ring_steps.csv"
         private const val SYNC_STALL_MS = 8_000L
         private const val REQ_PERM = 42
         private const val CONNECT_TIMEOUT_MS = 12_000L
@@ -102,7 +110,7 @@ class MainActivity : AppCompatActivity() {
             val last = prefs.getInt(KEY_LAST, -1)
             reconnectCycle(if (last in 1..255) last else null)
         }
-        b.syncBtn.setOnClickListener { startHrSync() }
+        b.syncBtn.setOnClickListener { startSync() }
         b.shareBtn.setOnClickListener { shareCsv() }
 
         b.footer.text = "Ring ${BuildConfig.RING_MAC}\nWake the ring & close the QRing app before setting."
@@ -265,18 +273,22 @@ class MainActivity : AppCompatActivity() {
                 setStatus("Ring is set to $interval min  ($state)")
             }
             CMD_HR_READ -> handleHrPacket(r)
+            CMD_STEPS -> handleStepsPacket(r)
         }
     }
 
     // ---- heart-rate log sync ----
 
-    private fun startHrSync() {
+    private fun startSync() {
         if (syncing) { toast("Already syncing…"); return }
-        setDataStatus("Syncing heart-rate log…")
+        setDataStatus("Syncing…")
         withRing {
             syncing = true
             newSampleCount = 0
+            newStepsCount = 0
             loadHistory()
+            loadSteps()
+            stage = Stage.HR
             syncOffsets.clear()
             syncOffsets.addAll(listOf(0, -1, -2))   // today + 2 previous days
             requestNextDay()
@@ -285,11 +297,47 @@ class MainActivity : AppCompatActivity() {
 
     private fun requestNextDay() {
         val off = syncOffsets.removeFirstOrNull()
-        if (off == null) { finishSync(); return }
+        if (off == null) { startStepsStage(); return }
         curSize = 0; curCount = 0; curDayIdx = 0
         curDayStart = midnightEpoch(off)
         scheduleSyncStall()
         doWrite(packet(hrReadPayload(curDayStart)), confirm = null)
+    }
+
+    private fun startStepsStage() {
+        stage = Stage.STEPS
+        setDataStatus("Syncing steps…")
+        stepsOffsets.clear()
+        stepsOffsets.addAll(listOf(0, 1, 2))        // daysAgo: today + 2 previous
+        requestNextStepsDay()
+    }
+
+    private fun requestNextStepsDay() {
+        val d = stepsOffsets.removeFirstOrNull()
+        if (d == null) { finishSync(); return }
+        scheduleSyncStall()
+        doWrite(packet(byteArrayOf(CMD_STEPS.toByte(), d.toByte(), 0x0f, 0x00, 0x5f, 0x01)), confirm = null)
+    }
+
+    private fun handleStepsPacket(r: ByteArray) {
+        if (!syncing || stage != Stage.STEPS || r.size < 13) return
+        scheduleSyncStall()
+        when (r[1].toInt() and 0xFF) {
+            0xFF -> { requestNextStepsDay(); return }   // empty day
+            0xF0 -> return                              // header packet, no sample
+        }
+        val year = 2000 + bcd(r[1])
+        val month0 = bcd(r[2]) - 1
+        val day = bcd(r[3])
+        val q = r[4].toInt() and 0xFF
+        val ts = ymdEpoch(year, month0, day, q / 4, (q % 4) * 15)
+        val cal = u16(r, 7); val steps = u16(r, 9); val dist = u16(r, 11)
+        if (steps in 0..100_000 && year in 2020..2100) {
+            if (stepsHistory.put(ts, intArrayOf(steps, cal, dist)) == null) newStepsCount++
+        }
+        val cur = r[5].toInt() and 0xFF
+        val total = r[6].toInt() and 0xFF
+        if (cur >= total - 1) requestNextStepsDay()
     }
 
     private fun handleHrPacket(r: ByteArray) {
@@ -307,12 +355,12 @@ class MainActivity : AppCompatActivity() {
                 curDayStart = le32(r, 2)
                 for (i in 6..14) addHr(r[i])
                 curCount++
-                if (curCount >= curSize) requestNextDay()
+                if (curCount >= curSize - 1) requestNextDay()   // size counts the header packet
             }
             else -> {
                 for (i in 2..14) addHr(r[i])
                 curCount++
-                if (curCount >= curSize) requestNextDay()
+                if (curCount >= curSize - 1) requestNextDay()   // size counts the header packet
             }
         }
     }
@@ -331,9 +379,13 @@ class MainActivity : AppCompatActivity() {
         cancelSyncStall()
         if (!syncing) return
         syncing = false
-        val f = saveHistory()
-        setDataStatus("Synced ✓  ${hrHistory.size} readings total  (+$newSampleCount new)\nSaved to ${f.name}")
-        toast("Synced: +$newSampleCount new readings")
+        saveHistory()
+        saveSteps()
+        setDataStatus(
+            "Synced ✓\nHR: ${hrHistory.size} (+$newSampleCount)   ·   " +
+                "Steps: ${stepsHistory.size} (+$newStepsCount)\nSaved ring_hr.csv, ring_steps.csv"
+        )
+        toast("Synced: +$newSampleCount HR, +$newStepsCount step buckets")
     }
 
     private fun scheduleSyncStall() {
@@ -374,6 +426,19 @@ class MainActivity : AppCompatActivity() {
             ((r[off + 2].toLong() and 0xFF) shl 16) or
             ((r[off + 3].toLong() and 0xFF) shl 24)
 
+    private fun u16(r: ByteArray, off: Int): Int =
+        (r[off].toInt() and 0xFF) or ((r[off + 1].toInt() and 0xFF) shl 8)
+
+    /** The ring encodes dates as ints-used-as-literal-bytes, e.g. 2026 -> 0x26. */
+    private fun bcd(b: Byte): Int = ("%02x".format(b.toInt() and 0xFF)).toInt()
+
+    private fun ymdEpoch(year: Int, month0: Int, day: Int, hour: Int, minute: Int): Long {
+        val c = Calendar.getInstance()
+        c.set(year, month0, day, hour, minute, 0)
+        c.set(Calendar.MILLISECOND, 0)
+        return c.timeInMillis / 1000
+    }
+
     // ---- CSV persistence + share ----
 
     private fun csvFile() = File(filesDir, HR_CSV)
@@ -402,16 +467,45 @@ class MainActivity : AppCompatActivity() {
         return f
     }
 
+    private fun stepsFile() = File(filesDir, STEPS_CSV)
+
+    private fun loadSteps() {
+        val f = stepsFile()
+        if (!f.exists()) return
+        f.readLines().drop(1).forEach { line ->
+            val p = line.split(',')
+            if (p.size >= 5) {
+                val ep = p[1].toLongOrNull(); val s = p[2].toIntOrNull()
+                val c = p[3].toIntOrNull(); val d = p[4].toIntOrNull()
+                if (ep != null && s != null && c != null && d != null) {
+                    stepsHistory[ep] = intArrayOf(s, c, d)
+                }
+            }
+        }
+    }
+
+    private fun saveSteps(): File {
+        val fmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+        val sb = StringBuilder("timestamp,epoch_s,steps,calories,distance_m\n")
+        for ((ep, a) in stepsHistory) {
+            sb.append(fmt.format(Date(ep * 1000))).append(',').append(ep).append(',')
+                .append(a[0]).append(',').append(a[1]).append(',').append(a[2]).append('\n')
+        }
+        val f = stepsFile()
+        f.writeText(sb.toString())
+        return f
+    }
+
     private fun shareCsv() {
-        val f = csvFile()
-        if (!f.exists()) { toast("No data yet — tap Sync first"); return }
-        val uri: Uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", f)
-        val send = Intent(Intent.ACTION_SEND).apply {
+        val files = filesDir.listFiles { f -> f.name.endsWith(".csv") }?.toList().orEmpty()
+        if (files.isEmpty()) { toast("No data yet — tap Sync first"); return }
+        val uris = ArrayList(files.map { FileProvider.getUriForFile(this, "$packageName.fileprovider", it) })
+        val send = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
             type = "text/csv"
-            putExtra(Intent.EXTRA_STREAM, uri)
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        startActivity(Intent.createChooser(send, "Share heart-rate CSV"))
+        startActivity(Intent.createChooser(send, "Share ring CSVs"))
     }
 
     private fun setDataStatus(s: String) = runOnUiThread { b.dataStatus.text = s }

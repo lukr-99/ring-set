@@ -20,9 +20,10 @@ This app writes the ring's raw BLE command, so you can pick **any interval from
 - **Reconnect** (manual button + "reconnect after setting" toggle) — drops and
   re-establishes the BLE link and re-applies the interval, which makes the ring
   commit the change (otherwise it can revert to its previous value)
-- **Sync heart-rate log** — pulls the ring's stored HR log over BLE and **merges** it
-  into a CSV on the phone (history accumulates across syncs); **Share**/export it, or
-  copy it to a PC with [`pull-data.ps1`](pull-data.ps1) (see [AGENTS.md](AGENTS.md))
+- **Sync data** — pulls the ring's stored **heart-rate and step** logs over BLE and
+  **merges** them into CSVs on the phone (history accumulates across syncs);
+  **Share**/export them, or copy to a PC with [`pull-data.ps1`](pull-data.ps1)
+  (see [AGENTS.md](AGENTS.md))
 - Connects directly by MAC, no account/cloud, works offline
 - Material 3 dark UI, adaptive launcher icon
 
@@ -88,9 +89,12 @@ preset again.
 
 ## Your data
 
-Tap **Sync heart rate** to read the ring's stored HR log and merge it into
-`ring_hr.csv` (schema: `timestamp,epoch_s,bpm`). The ring only keeps a small rolling
-buffer, so sync regularly — the merge keeps everything you've already pulled.
+Tap **Sync data** to read the ring's stored logs and merge them into CSVs:
+- `ring_hr.csv` — `timestamp,epoch_s,bpm`
+- `ring_steps.csv` — `timestamp,epoch_s,steps,calories,distance_m` (hourly buckets)
+
+The ring only keeps a small rolling buffer, so sync regularly — the merge keeps
+everything you've already pulled.
 
 Get it off the phone either way:
 - **Share** button → Android share sheet (Drive, email, Files…), no PC needed.
@@ -98,7 +102,7 @@ Get it off the phone either way:
   `Desktop\ring-data`); it uses `adb run-as`, which works because this is a debug
   build. See [AGENTS.md](AGENTS.md) for the manual `adb` commands too.
 
-> SpO2, steps, and sleep syncing are on the roadmap and will appear as extra CSVs
+> SpO2 and sleep syncing are next on the roadmap and will appear as extra CSVs
 > that `pull-data.ps1` picks up automatically.
 
 ## How it works

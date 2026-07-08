@@ -168,7 +168,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingBottom="10dp"
-            android:text="Sync pulls the ring's stored heart-rate log into a CSV on the phone."
+            android:text="Sync pulls the ring's stored logs (heart rate + steps) into CSVs on the phone."
             android:textColor="@color/textDim"
             android:textSize="13sp" />
 
@@ -184,7 +184,7 @@
                 android:layout_weight="1"
                 android:minHeight="54dp"
                 app:cornerRadius="16dp"
-                android:text="Sync heart rate" />
+                android:text="Sync data" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/shareBtn"
