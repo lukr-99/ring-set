@@ -95,15 +95,22 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
         private const val CMD_BIG_DATA = 0xBC
         private const val BD_SPO2 = 0x2A
         private const val BD_SLEEP = 0x27
-        private const val CMD_REALTIME = 0x69      // start/continue a live reading
-        private const val CMD_REALTIME_STOP = 0x6A // stop a live reading
-        private const val RT_HEART_RATE = 0x01     // reading type: heart rate
-        private const val RT_START = 0x01
-        private const val RT_CONTINUE = 0x03
+        // Real-time HR — matches the QRing/Oudmon SDK exactly:
+        //   start:  StartHeartRateReq.getSimpleReq(1) -> [0x69, type=1, sub=0]
+        //   poll:   RealTimeHeartRate(3)              -> [0x1e, 3]  (cmd 30, ~1s keepalive)
+        //   stop:   StopHeartRateReq.stopHeartRate(0) -> [0x6a, 1, 0, 0]
+        // Value: 0x69 response is StartHeartRateRsp (type=[1] err=[2] hr=[3]); a 0x1e response
+        // is RealTimeHeartRateRsp (hr=[1]).
+        private const val CMD_HR_START = 0x69
+        private const val CMD_HR_POLL = 0x1E
+        private const val CMD_HR_POLL_RSP = 0x9E // 30 | 0x80 — the ring's reply to the poll
+        private const val CMD_HR_STOP = 0x6A
+        private const val HR_TYPE = 0x01
+        private val HR_VALID = 30..220
         private const val CONNECT_TIMEOUT_MS = 12_000L
         private const val RECONNECT_DELAY_MS = 1_600L
         private const val SYNC_STALL_MS = 8_000L
-        private const val LIVE_KEEPALIVE_MS = 2_500L
+        private const val LIVE_KEEPALIVE_MS = 1_000L
         private const val LIVE_TAG = "RingLive"
     }
 
@@ -162,9 +169,8 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
             liveOn = true
             liveRequested = false
             liveHr.value = null
-            liveStatus.value = "Measuring — keep the ring snug"
-            Log.d(LIVE_TAG, "start -> ${hex(byteArrayOf(CMD_REALTIME.toByte(), RT_HEART_RATE.toByte(), RT_START.toByte()))}")
-            doWrite(packet(byteArrayOf(CMD_REALTIME.toByte(), RT_HEART_RATE.toByte(), RT_START.toByte())))
+            liveStatus.value = "Measuring — hold still, ~30s to lock"
+            doWrite(packet(byteArrayOf(CMD_HR_START.toByte(), HR_TYPE.toByte(), 0x00)))
             scheduleLiveKeepAlive()
         }
     }
@@ -172,7 +178,7 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
     fun stopLiveHr() {
         liveOn = false; liveRequested = false
         liveKeepAlive?.let { handler.removeCallbacks(it) }; liveKeepAlive = null
-        if (ready && writeChar != null) doWrite(packet(byteArrayOf(CMD_REALTIME_STOP.toByte(), RT_HEART_RATE.toByte(), 0, 0)))
+        if (ready && writeChar != null) doWrite(packet(byteArrayOf(CMD_HR_STOP.toByte(), HR_TYPE.toByte(), 0, 0)))
         liveHr.value = null
         liveStatus.value = ""
     }
@@ -181,7 +187,7 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
         liveKeepAlive?.let { handler.removeCallbacks(it) }
         liveKeepAlive = Runnable {
             if (liveOn && ready) {
-                doWrite(packet(byteArrayOf(CMD_REALTIME.toByte(), RT_HEART_RATE.toByte(), RT_CONTINUE.toByte())))
+                doWrite(packet(byteArrayOf(CMD_HR_POLL.toByte(), 0x03)))
                 scheduleLiveKeepAlive()
             }
         }
@@ -297,23 +303,29 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
             CMD_STEPS -> handleStepsPacket(r)
             CMD_STRESS -> handleStressPacket(r)
             CMD_HRV -> handleHrvPacket(r)
-            CMD_REALTIME -> handleLivePacket(r)
+            CMD_HR_START -> handleLivePacket(r)
+            CMD_HR_POLL, CMD_HR_POLL_RSP -> handleLivePoll(r)
             else -> if (liveOn) Log.d(LIVE_TAG, "other <- ${hex(r)}")
         }
     }
 
+    // StartHeartRateRsp: [0x69, type, err, hr, …]
     private fun handleLivePacket(r: ByteArray) {
         if (!liveOn) return
         Log.d(LIVE_TAG, "recv <- ${hex(r)}")
         if (r.size < 4) return
-        // [0x69, type, err, value…] on this firmware. err!=0 = sensor not reading yet.
-        val err = r[2].toInt() and 0xFF
         val bpm = r[3].toInt() and 0xFF
-        when {
-            err == 0 && bpm in 1..250 -> { liveHr.value = bpm; liveStatus.value = "Live" }
-            bpm in 30..250 -> { liveHr.value = bpm; liveStatus.value = "Live" } // some fw put value with err flag set
-            else -> liveStatus.value = "Adjust the ring — no reading yet"
-        }
+        if (bpm in HR_VALID) { liveHr.value = bpm; liveStatus.value = "Live" }
+        else if (liveHr.value == null) liveStatus.value = "Measuring — hold still, ~30s to lock"
+    }
+
+    // RealTimeHeartRateRsp (cmd 30, replied as 0x9e): [0x9e, hr, …]. 0xEE = warming up.
+    private fun handleLivePoll(r: ByteArray) {
+        if (!liveOn || r.size < 2) return
+        Log.d(LIVE_TAG, "poll <- ${hex(r)}")
+        val bpm = r[1].toInt() and 0xFF
+        if (bpm in HR_VALID) { liveHr.value = bpm; liveStatus.value = "Live" }
+        else if (liveHr.value == null) liveStatus.value = "Measuring — hold still, ~30s to lock"
     }
 
     private fun hex(b: ByteArray) = b.joinToString(" ") { "%02x".format(it.toInt() and 0xFF) }
