@@ -7,7 +7,7 @@ Instructions for an automated agent (or a human) to export the data that the
 - The app reads the ring's stored logs over BLE and writes/merges them into CSVs in its
   private files dir on the phone: `/data/data/com.krejci.qringset/files/`.
   - `ring_hr.csv` — `timestamp,epoch_s,bpm`
-  - `ring_steps.csv` — `timestamp,epoch_s,steps,calories,distance_m` (hourly)
+  - `ring_steps.csv` — `timestamp,epoch_s,steps` (15-min buckets)
   - `ring_spo2.csv` — `timestamp,epoch_s,spo2` (hourly %)
   - `ring_sleep.csv` — `timestamp,epoch_s,stage,stage_label,duration_min`
   - `ring_stress.csv` — `timestamp,epoch_s,stress` (30-min)
@@ -20,7 +20,7 @@ Instructions for an automated agent (or a human) to export the data that the
 1. Phone connected over USB with **USB debugging** authorized (`adb devices` shows `device`).
 2. The app installed as a **debug** build (it is, from this repo) — this is what lets
    `adb run-as` read the app's private files without root.
-3. In the app, tap **"Sync heart rate"** first so the CSV is up to date.
+3. In the app, open the **Data** tab and tap **"Sync now"** first so the CSVs are up to date.
 
 ## Pull it (recommended)
 ```powershell
@@ -36,8 +36,8 @@ adb exec-out run-as com.krejci.qringset cat files/ring_hr.csv > ring_hr.csv
 (`run-as` reads relative to the app's data dir, so the path is `files/ring_hr.csv`.)
 
 ## Alternative: in-app Share
-Tap **Share** in the app to send `ring_hr.csv` via the Android share sheet (Drive,
-email, Files, etc.) — useful when the phone isn't tethered to this PC.
+Tap **Export & share** on the Data tab to send every `ring_*.csv` via the Android share
+sheet (Drive, email, Files, etc.) — useful when the phone isn't tethered to this PC.
 
 ## Notes / gotchas
 - `run-as` only works because this is a **debug** build. A release-signed build would
