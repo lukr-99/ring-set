@@ -4,12 +4,16 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
@@ -28,58 +32,53 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.content.Intent
 import android.provider.MediaStore
 import android.provider.Settings
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.krejci.qringset.ble.Conn
 import com.krejci.qringset.ui.RingViewModel
 import com.krejci.qringset.ui.components.ScreenHeader
 import com.krejci.qringset.ui.components.SectionLabel
 
+private val CARD = RoundedCornerShape(18.dp)
+
 @Composable
 fun ControlScreen(vm: RingViewModel) {
-    val status by vm.status.collectAsStateWithLifecycle()
-    ScreenHeader("Control", "Heart-rate logging interval",
+    ScreenHeader("Control", "Interval, alerts & camera",
         "How often the ring records a heart-rate reading in the background. Lower = more detail " +
             "but more battery use. The ring can drift back to its old value after you change it — " +
             "leave \"Reconnect after setting\" on so the new interval sticks.")
 
     Spacer(Modifier.height(14.dp))
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)), shape = RoundedCornerShape(18.dp)) {
-        Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(status, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
-        }
-    }
+    StatusStrip(vm)
 
-    SectionLabel("Quick presets")
+    // ---- logging interval: presets + custom under one heading ----
+    SectionLabel("Logging interval")
     val presets = listOf(1, 3, 5, 10, 30, 60)
+    var custom by remember { mutableStateOf("") }
+    val customMin = custom.toIntOrNull()
+    val customOk = customMin != null && customMin in 1..255
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         for (row in presets.chunked(3)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 for (p in row) Preset(p, p == vm.lastInterval, Modifier.weight(1f)) { vm.setInterval(p) }
             }
         }
-    }
-
-    SectionLabel("Custom interval")
-    var custom by remember { mutableStateOf("") }
-    val customMin = custom.toIntOrNull()
-    val customOk = customMin != null && customMin in 1..255
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(16.dp)) {
-        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(
                 value = custom,
                 onValueChange = { custom = it.filter(Char::isDigit).take(3) },
                 modifier = Modifier.weight(1f),
                 singleLine = true,
-                label = { Text("Minutes (1–255)") },
+                label = { Text("Custom (1–255 min)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             )
             Button(onClick = { if (customOk) { vm.setInterval(customMin!!); custom = "" } }, enabled = customOk) {
@@ -88,24 +87,27 @@ fun ControlScreen(vm: RingViewModel) {
         }
     }
 
-    SectionLabel("Options")
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(16.dp)) {
-        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Reconnect after setting", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-                Text("Makes the new interval stick", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    // ---- connection: reconnect option + actions in one card ----
+    SectionLabel("Connection")
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = CARD) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Reconnect after setting", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                    Text("Makes a new interval stick", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = vm.autoReconnect, onCheckedChange = { vm.updateAuto(it) })
             }
-            Switch(checked = vm.autoReconnect, onCheckedChange = { vm.updateAuto(it) })
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(onClick = { vm.readInterval() }, modifier = Modifier.weight(1f)) { Text("Check ring") }
+                Button(onClick = { vm.reconnect() }, modifier = Modifier.weight(1f)) { Text("Reconnect") }
+            }
         }
     }
-    Spacer(Modifier.height(12.dp))
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        OutlinedButton(onClick = { vm.readInterval() }, modifier = Modifier.weight(1f)) { Text("Check ring") }
-        Button(onClick = { vm.reconnect() }, modifier = Modifier.weight(1f)) { Text("Reconnect") }
-    }
 
+    // ---- health alerts ----
     SectionLabel("Health alerts")
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(16.dp)) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = CARD) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -134,6 +136,32 @@ fun ControlScreen(vm: RingViewModel) {
     Spacer(Modifier.height(12.dp))
 }
 
+/** Slim connection/status line: a state-coloured dot, the latest status text, and battery %. */
+@Composable
+private fun StatusStrip(vm: RingViewModel) {
+    val status by vm.status.collectAsStateWithLifecycle()
+    val conn by vm.conn.collectAsStateWithLifecycle()
+    val battery by vm.battery.collectAsStateWithLifecycle()
+    val dot = when (conn) {
+        Conn.CONNECTED -> MaterialTheme.colorScheme.primary
+        Conn.CONNECTING -> Color(0xFFFBBF24)
+        Conn.DISCONNECTED -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = CARD) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(9.dp).clip(CircleShape).background(dot))
+            Spacer(Modifier.width(11.dp))
+            Text(status, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp,
+                fontWeight = FontWeight.Medium, maxLines = 2)
+            battery?.let {
+                Spacer(Modifier.width(10.dp))
+                Text((if (it.charging) "⚡ " else "") + "${it.level}%", fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
 @Composable
 private fun CameraShutterSection(vm: RingViewModel) {
     val ctx = LocalContext.current
@@ -141,11 +169,10 @@ private fun CameraShutterSection(vm: RingViewModel) {
     val camOn by vm.cameraMode.collectAsStateWithLifecycle()
 
     SectionLabel("Camera shutter")
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(16.dp)) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = CARD) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Shake your ring to take a photo", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-            Text("Ring Set taps the shutter in whatever camera app is open when your ring signals a photo. " +
-                "Enable the accessibility service once, turn the gesture on, open your camera, then shake the ring.",
+            Text("Ring Set taps the shutter of whatever camera is open when the ring signals a photo.",
                 fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             // 1) accessibility permission
@@ -193,7 +220,7 @@ private fun Preset(min: Int, selected: Boolean, modifier: Modifier, onClick: () 
     val border = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
     Column(
         modifier.clip(RoundedCornerShape(16.dp)).background(bg).border(1.dp, border, RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick).padding(vertical = 16.dp),
+            .clickable(onClick = onClick).padding(vertical = 15.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text("$min min", fontWeight = FontWeight.Bold, fontSize = 16.sp,
