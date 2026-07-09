@@ -142,17 +142,18 @@ fun SleepGoalDial(
         }
 
         // draggable handles (overlay icons; touch is handled by the Canvas beneath)
-        HandleIcon(bedMin, ringRadiusDp, diameter, Icons.Rounded.Bedtime, primary, onPrimary)
-        HandleIcon(wakeMin, ringRadiusDp, diameter, Icons.Rounded.Alarm, primary, onPrimary)
+        HandleIcon(bedMin, ringRadiusDp, Icons.Rounded.Bedtime, primary, onPrimary)
+        HandleIcon(wakeMin, ringRadiusDp, Icons.Rounded.Alarm, primary, onPrimary)
     }
 }
 
 @Composable
-private fun HandleIcon(min: Int, ringRadiusDp: Float, diameter: Int, icon: androidx.compose.ui.graphics.vector.ImageVector, bg: Color, fg: Color) {
+private fun HandleIcon(min: Int, ringRadiusDp: Float, icon: androidx.compose.ui.graphics.vector.ImageVector, bg: Color, fg: Color) {
+    // Offset is relative to the parent Box's center (the icon is center-aligned), so this places
+    // the handle straight onto the ring.
     val a = Math.toRadians((min / 1440f * 360f - 90f).toDouble())
-    val half = diameter / 2f
-    val hx = (half + ringRadiusDp * cos(a) - 15).roundToInt()
-    val hy = (half + ringRadiusDp * sin(a) - 15).roundToInt()
+    val hx = (ringRadiusDp * cos(a)).roundToInt()
+    val hy = (ringRadiusDp * sin(a)).roundToInt()
     Box(
         Modifier.offset(hx.dp, hy.dp).size(30.dp).clip(CircleShape).background(bg),
         contentAlignment = Alignment.Center,
