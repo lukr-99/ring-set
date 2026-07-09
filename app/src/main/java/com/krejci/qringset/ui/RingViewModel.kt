@@ -22,7 +22,10 @@ import com.krejci.qringset.data.UserProfile
 import com.krejci.qringset.data.UserProfileStore
 import com.krejci.qringset.data.WorkoutEntity
 import com.krejci.qringset.domain.AlertEngine
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 data class ScannedRing(val mac: String, val name: String, val rssi: Int)
@@ -66,6 +69,25 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
     fun setHrAlerts(b: Boolean) { hrAlertsEnabled = b; prefs.edit().putBoolean("hr_alerts", b).apply() }
     fun updateHrSpike(v: Int) { hrSpike = v.coerceIn(90, 220); prefs.edit().putInt("hr_spike", hrSpike).apply() }
 
+    // ---- auto-sync (while the app is open) ----
+    var autoSyncEnabled by mutableStateOf(prefs.getBoolean("auto_sync", false))
+        private set
+    private var autoSyncJob: Job? = null
+    fun setAutoSync(b: Boolean) {
+        autoSyncEnabled = b; prefs.edit().putBoolean("auto_sync", b).apply()
+        if (b) startAutoSync() else { autoSyncJob?.cancel(); autoSyncJob = null }
+    }
+    /** Roughly one HR-logging interval (+30s for the ring to finish measuring) between syncs. */
+    private fun startAutoSync() {
+        autoSyncJob?.cancel()
+        autoSyncJob = viewModelScope.launch {
+            while (isActive) {
+                delay(lastInterval.coerceIn(1, 255) * 60_000L + 30_000L)
+                if (autoSyncEnabled && !workoutActive.value && !syncing.value) sync()
+            }
+        }
+    }
+
     val scanResults = MutableStateFlow<List<ScannedRing>>(emptyList())
     val scanning = MutableStateFlow(false)
 
@@ -75,6 +97,7 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             ble.liveHr.collect { v -> if (workoutActive.value && v != null) workoutSamples.value = workoutSamples.value + v }
         }
+        if (autoSyncEnabled) startAutoSync()
     }
 
     fun activeMac(): String = ble.mac
@@ -156,6 +179,7 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
                 startEpoch = workoutStart.value,
                 endEpoch = System.currentTimeMillis() / 1000,
                 avgHr = s.average().toInt(), maxHr = s.max(), minHr = s.min(), samples = s.size,
+                samplesCsv = s.joinToString(","),
             )
             viewModelScope.launch { repo.saveWorkout(w) }
         }

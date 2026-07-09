@@ -34,6 +34,7 @@ import com.krejci.qringset.data.MetricType
 import com.krejci.qringset.data.Point
 import com.krejci.qringset.domain.StatsEngine
 import com.krejci.qringset.ui.RingViewModel
+import com.krejci.qringset.ui.components.ChoiceChip
 import com.krejci.qringset.ui.components.MetricChart
 import com.krejci.qringset.ui.components.ScreenHeader
 import com.krejci.qringset.ui.metricColor
@@ -48,19 +49,33 @@ fun StatsScreen(vm: RingViewModel) {
     val entities by vm.samples(metric).collectAsStateWithLifecycle(emptyList())
     val points = remember(entities) { entities.map { Point(it.epoch, it.value.toFloat()) } }
     val color = metricColor(metric)
+    val ranges = remember { listOf("1h" to 3600L, "12h" to 43_200L, "24h" to 86_400L, "Week" to 604_800L, "All" to Long.MAX_VALUE) }
+    var rangeIdx by remember { mutableStateOf(2) }
+    val ranged = remember(points, rangeIdx) {
+        val secs = ranges[rangeIdx].second
+        if (secs == Long.MAX_VALUE) points
+        else { val cut = System.currentTimeMillis() / 1000 - secs; points.filter { it.epoch >= cut } }
+    }
 
-    ScreenHeader("Insights", "${metric.label} · ${points.size} readings",
-        "Charts of what the ring recorded. Tap a metric to switch. Drag the small window under " +
-            "the graph to scrub through time, and pull its edges to zoom in. The tiles below show " +
-            "the average, min, max and latest value for whatever slice is currently in view.")
+    ScreenHeader("Insights", "${metric.label} · ${ranged.size} in ${ranges[rangeIdx].first}",
+        "Charts of what the ring recorded. Tap a metric to switch, pick a time range, then drag the " +
+            "window under the graph to scrub and pull its edges to zoom. The tiles show the average, " +
+            "min, max and latest value for whatever slice is in view.")
 
     Spacer(Modifier.height(14.dp))
     MetricChips(metric) { metric = it; window = 0f to 1f }
 
+    Spacer(Modifier.height(8.dp))
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        ranges.forEachIndexed { i, (label, _) ->
+            ChoiceChip(label, i == rangeIdx, Modifier.weight(1f)) { rangeIdx = i; window = 0f to 1f }
+        }
+    }
+
     Spacer(Modifier.height(14.dp))
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(20.dp)) {
         Column(Modifier.padding(14.dp)) {
-            MetricChart(points, color, window) { window = it }
+            MetricChart(ranged, color, window) { window = it }
             Spacer(Modifier.height(4.dp))
             Text("Drag the window to scrub · pull the edges to zoom",
                 color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp,
@@ -68,12 +83,12 @@ fun StatsScreen(vm: RingViewModel) {
         }
     }
 
-    val n = points.size
+    val n = ranged.size
     val slice = if (n >= 2) {
         val i0 = floor(window.first * (n - 1)).toInt().coerceIn(0, n - 1)
         val i1 = ceil(window.second * (n - 1)).toInt().coerceIn(0, n - 1)
-        points.subList(i0, (i1 + 1).coerceAtMost(n))
-    } else points
+        ranged.subList(i0, (i1 + 1).coerceAtMost(n))
+    } else ranged
     val summary = StatsEngine.summarize(slice.map { it.value.roundToInt() })
 
     Spacer(Modifier.height(12.dp))

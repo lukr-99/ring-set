@@ -1,6 +1,7 @@
 package com.krejci.qringset.ui.screens
 
 import android.widget.Toast
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -37,8 +38,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.krejci.qringset.ble.Conn
 import com.krejci.qringset.data.ActivityType
 import com.krejci.qringset.data.MetricType
+import com.krejci.qringset.data.Point
+import com.krejci.qringset.data.WorkoutEntity
 import com.krejci.qringset.ui.RingViewModel
 import com.krejci.qringset.ui.components.ChoiceChip
+import com.krejci.qringset.ui.components.MetricChart
+import com.krejci.qringset.ui.components.MiniLine
 import com.krejci.qringset.ui.components.ScreenHeader
 import com.krejci.qringset.ui.components.SectionLabel
 import com.krejci.qringset.ui.metricColor
@@ -55,6 +60,7 @@ fun ActivityScreen(vm: RingViewModel) {
     val history by vm.workouts().collectAsStateWithLifecycle(emptyList())
     var type by remember { mutableStateOf(ActivityType.WORKOUT) }
     var showMark by remember { mutableStateOf(false) }
+    var detail by remember { mutableStateOf<WorkoutEntity?>(null) }
     val context = LocalContext.current
 
     var now by remember { mutableStateOf(System.currentTimeMillis() / 1000) }
@@ -79,6 +85,10 @@ fun ActivityScreen(vm: RingViewModel) {
                 if (liveStatus.isNotBlank() && liveStatus != "Live") {
                     Spacer(Modifier.height(4.dp))
                     Text(liveStatus, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (samples.size >= 2) {
+                    Spacer(Modifier.height(14.dp))
+                    MiniLine(samples.mapIndexed { i, v -> Point(i.toLong(), v.toFloat()) }, metricColor(MetricType.HR))
                 }
             } else if (conn != Conn.CONNECTED) {
                 Spacer(Modifier.height(6.dp))
@@ -120,7 +130,7 @@ fun ActivityScreen(vm: RingViewModel) {
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(16.dp)) {
             Column(Modifier.padding(horizontal = 16.dp)) {
                 for (w in history.take(8)) {
-                    Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().clickable { detail = w }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(w.type, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                             Text(fmtDate(w.startEpoch), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -134,6 +144,49 @@ fun ActivityScreen(vm: RingViewModel) {
         }
     }
     Spacer(Modifier.height(6.dp))
+
+    detail?.let { WorkoutDetailDialog(it) { detail = null } }
+}
+
+@Composable
+private fun WorkoutDetailDialog(w: WorkoutEntity, onDismiss: () -> Unit) {
+    val values = remember(w) { w.samplesCsv.split(",").mapNotNull { it.toIntOrNull() } }
+    val points = remember(w) {
+        if (values.size < 2) emptyList()
+        else values.mapIndexed { i, v -> Point(w.startEpoch + (w.endEpoch - w.startEpoch) * i / (values.size - 1), v.toFloat()) }
+    }
+    var window by remember { mutableStateOf(0f to 1f) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        title = { Text(w.type) },
+        text = {
+            Column(Modifier.fillMaxWidth()) {
+                Text("${fmtDate(w.startEpoch)} · ${(w.endEpoch - w.startEpoch) / 60}m",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(10.dp))
+                if (points.size >= 2) {
+                    MetricChart(points, metricColor(MetricType.HR), window) { window = it }
+                    Spacer(Modifier.height(10.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        DetailStat("Avg", w.avgHr, Modifier.weight(1f))
+                        DetailStat("Max", w.maxHr, Modifier.weight(1f))
+                        DetailStat("Min", w.minHr, Modifier.weight(1f))
+                    }
+                } else {
+                    Text("No live HR was recorded for this session.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun DetailStat(label: String, value: Int, modifier: Modifier) {
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value.toString(), fontSize = 20.sp, fontWeight = FontWeight.Bold, color = metricColor(MetricType.HR))
+        Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
 
 @Composable

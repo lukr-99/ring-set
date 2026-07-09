@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [SampleEntity::class, SleepEntity::class, KnownRingEntity::class, WorkoutEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class RingDb : RoomDatabase() {
@@ -29,10 +29,17 @@ abstract class RingDb : RoomDatabase() {
             }
         }
 
+        /** v3 stores each workout's per-second HR samples for the detail chart. */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `workouts` ADD COLUMN `samplesCsv` TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         @Volatile private var instance: RingDb? = null
         fun get(context: Context): RingDb = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, RingDb::class.java, "ring.db")
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build().also { instance = it }
         }
     }

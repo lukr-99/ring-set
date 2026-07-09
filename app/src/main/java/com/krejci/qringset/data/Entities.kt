@@ -22,4 +22,6 @@ data class WorkoutEntity(
     val maxHr: Int,
     val minHr: Int,
     val samples: Int,
+    /** The session's live-HR readings, comma-separated, for the detail chart. */
+    val samplesCsv: String = "",
 )
