@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -64,6 +65,11 @@ fun DataScreen(vm: RingViewModel, onExportShare: () -> Unit) {
         }
         OutlinedButton(onClick = onExportShare, modifier = Modifier.weight(1f)) { Text("Export & share") }
     }
+    Spacer(Modifier.height(10.dp))
+    Text(
+        if (vm.lastSync > 0L) "Last synced ${fmtSync(vm.lastSync)}" else "Not synced yet",
+        Modifier.fillMaxWidth(), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
+    )
 
     SectionLabel("Options")
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(16.dp)) {
@@ -86,3 +92,5 @@ private fun DataRow(name: String, value: String, color: Color) {
         Text(value, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
     }
 }
+
+private fun fmtSync(ms: Long) = java.text.SimpleDateFormat("MMM d, HH:mm", java.util.Locale.US).format(java.util.Date(ms))

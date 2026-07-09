@@ -60,6 +60,8 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var lastInterval by mutableStateOf(prefs.getInt("last_interval", 5))
         private set
+    var lastSync by mutableStateOf(prefs.getLong("last_sync", 0L))
+        private set
 
     // ---- HR alert settings ----
     var hrAlertsEnabled by mutableStateOf(prefs.getBoolean("hr_alerts", true))
@@ -116,6 +118,7 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
     fun sync() = ble.sync { result ->
         viewModelScope.launch {
             repo.persist(result); repo.exportCsvs()
+            lastSync = System.currentTimeMillis(); prefs.edit().putLong("last_sync", lastSync).apply()
             if (hrAlertsEnabled) runHrAlerts(result)
         }
     }
