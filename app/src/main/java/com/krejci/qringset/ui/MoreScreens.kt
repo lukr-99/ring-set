@@ -309,7 +309,7 @@ fun ProfileScreen(vm: RingViewModel) {
     Button(
         onClick = {
             vm.saveProfile(
-                UserProfile(
+                profile.copy(
                     name = name.trim(),
                     birthYear = birth.toIntOrNull() ?: 0,
                     sex = sex,

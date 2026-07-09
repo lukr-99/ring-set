@@ -141,6 +141,7 @@ fun SleepScreen(vm: RingViewModel) {
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Sleep goal · ${fmtHours(profile.goalSleepHours)}", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                Text("Bedtime ${fmtClock(profile.bedtimeMin)} · Wake ${fmtClock(profile.wakeMin)}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 val reached = (night.asleepMin / (profile.goalSleepHours * 60f)).coerceIn(0f, 1f)
                 Spacer(Modifier.height(8.dp))
                 Box(Modifier.fillMaxWidth().height(8.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)) {
@@ -154,8 +155,9 @@ fun SleepScreen(vm: RingViewModel) {
     }
     Spacer(Modifier.height(6.dp))
 
-    if (showGoal) GoalDialog(profile.goalSleepHours, onDismiss = { showGoal = false }) { h ->
-        vm.saveProfile(profile.copy(goalSleepHours = h)); showGoal = false
+    if (showGoal) SleepGoalSheet(profile.bedtimeMin, profile.wakeMin, onDismiss = { showGoal = false }) { b, w ->
+        vm.saveProfile(profile.copy(bedtimeMin = b, wakeMin = w, goalSleepHours = ((w - b + 1440) % 1440) / 60f))
+        showGoal = false
     }
 }
 
@@ -186,33 +188,25 @@ private fun StageBar(stage: Int, mins: Int, pct: Float) {
 }
 
 @Composable
-private fun GoalDialog(current: Float, onDismiss: () -> Unit, onSave: (Float) -> Unit) {
-    var h by remember { mutableStateOf(current.coerceIn(4f, 12f)) }
+private fun SleepGoalSheet(bed: Int, wake: Int, onDismiss: () -> Unit, onSave: (Int, Int) -> Unit) {
+    var b by remember { mutableStateOf(bed) }
+    var w by remember { mutableStateOf(wake) }
+    val windowMin = (w - b + 1440) % 1440
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = { onSave(h) }) { Text("Save") } },
+        confirmButton = { TextButton(onClick = { onSave(b, w) }) { Text("Save") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
         title = { Text("Sleep goal") },
         text = {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                Text("Target hours of sleep per night", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(14.dp))
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    Stepper("–") { h = (h - 0.5f).coerceAtLeast(4f) }
-                    Text(fmtHours(h), fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = SleepColor)
-                    Stepper("+") { h = (h + 0.5f).coerceAtMost(12f) }
-                }
+                Text("Drag the bedtime and wake-up handles.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(12.dp))
+                SleepGoalDial(b, w, onChange = { nb, nw -> b = nb; w = nw })
+                Spacer(Modifier.height(10.dp))
+                Text("Sleep time: ${fmtHM(windowMin)}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = SleepColor)
             }
         },
     )
-}
-
-@Composable
-private fun Stepper(label: String, onClick: () -> Unit) {
-    Box(
-        Modifier.size(46.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant).clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) { Text(label, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface) }
 }
 
 @Composable
@@ -224,3 +218,4 @@ private fun fmtHM(min: Int): String { val h = min / 60; val m = min % 60; return
 private fun fmtHours(h: Float): String { val i = h.toInt(); val m = ((h - i) * 60).roundToInt(); return if (m > 0) "${i}h ${m}m" else "${i}h" }
 private fun fmtTime(e: Long) = SimpleDateFormat("HH:mm", Locale.US).format(Date(e * 1000))
 private fun fmtDay(e: Long) = SimpleDateFormat("MMM d", Locale.US).format(Date(e * 1000))
+private fun fmtClock(m: Int) = "%02d:%02d".format((m / 60) % 24, m % 60)
