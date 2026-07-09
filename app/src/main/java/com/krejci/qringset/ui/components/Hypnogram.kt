@@ -2,7 +2,6 @@ package com.krejci.qringset.ui.components
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,6 +30,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
@@ -70,13 +70,18 @@ fun Hypnogram(segments: List<SleepSegment>, modifier: Modifier = Modifier) {
     val outlineColor = MaterialTheme.colorScheme.onSurface
     val total = segments.sumOf { it.durationMin }.coerceAtLeast(1)
     var selected by remember(segments) { mutableStateOf(-1) }
+    val zoom = rememberZoomPan(segments)
 
-    fun indexAt(xFrac: Float): Int {
-        val target = xFrac.coerceIn(0f, 1f) * total
+    // Map a screen fraction [0,1] (already un-zoomed) to a segment index by cumulative duration.
+    fun indexAtFrac(dataFrac: Float): Int {
+        val target = dataFrac.coerceIn(0f, 1f) * total
         var acc = 0
         segments.forEachIndexed { i, s -> acc += s.durationMin; if (target <= acc) return i }
         return segments.size - 1
     }
+
+    val nightStart = segments.first().epoch
+    val nightEnd = segments.last().epoch + segments.last().durationMin * 60L
 
     Column(modifier) {
         // ---- detail readout ----
@@ -93,66 +98,72 @@ fun Hypnogram(segments: List<SleepSegment>, modifier: Modifier = Modifier) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                 }
             } else {
-                Text("Tap or drag across the chart to inspect a stage",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                Text(
+                    if (zoom.zoomed) "Drag to pan · double-tap to reset zoom"
+                    else "Tap a stage to inspect · pinch to zoom",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp,
+                )
             }
         }
         Spacer(Modifier.height(6.dp))
 
         Canvas(
             Modifier.fillMaxWidth().height(150.dp)
-                .pointerInput(segments) { detectTapGestures { pos -> selected = indexAt(pos.x / size.width) } }
+                .zoomPan(zoom)
                 .pointerInput(segments) {
-                    detectDragGestures(
-                        onDragStart = { pos -> selected = indexAt(pos.x / size.width) },
-                        onDrag = { change, _ -> selected = indexAt(change.position.x / size.width) },
+                    detectTapGestures(
+                        onDoubleTap = { zoom.reset() },
+                        onTap = { pos -> selected = indexAtFrac(zoom.frac(pos.x / size.width)) },
                     )
                 },
         ) {
             val bottomAxis = 22f
             val plotH = size.height - bottomAxis
             val rowH = plotH / 4
-            var acc = 0
             var selX0 = -1f; var selX1 = -1f
             var prevYc = -1f
             val stepColor = scrubColor.copy(alpha = 0.35f)
-            for ((i, s) in segments.withIndex()) {
-                val row = STAGE_ROW[s.stage]
-                if (row == null) { acc += s.durationMin; continue }
-                val x0 = acc.toFloat() / total * size.width
-                val x1 = (acc + s.durationMin).toFloat() / total * size.width
-                acc += s.durationMin
-                val top = row * rowH + rowH * 0.18f
-                val h = rowH * 0.64f
-                val w = (x1 - x0).coerceAtLeast(1.5f)
-                val isSel = i == selected
-                drawRoundRect(
-                    color = sleepStageColor(s.stage).copy(alpha = if (selected < 0 || isSel) 1f else 0.55f),
-                    topLeft = Offset(x0, top), size = Size(w, h), cornerRadius = CornerRadius(4f, 4f),
-                )
-                // stepped connector line joining the stages into one continuous trace
-                val yc = row * rowH + rowH * 0.5f
-                if (prevYc >= 0f) drawLine(stepColor, Offset(x0, prevYc), Offset(x0, yc), strokeWidth = 2f)
-                drawLine(stepColor, Offset(x0, yc), Offset(x1, yc), strokeWidth = 2f)
-                prevYc = yc
-                if (isSel) { selX0 = x0; selX1 = x0 + w }
+            clipRect(0f, 0f, size.width, plotH) {
+                var acc = 0
+                for ((i, s) in segments.withIndex()) {
+                    val row = STAGE_ROW[s.stage]
+                    if (row == null) { acc += s.durationMin; continue }
+                    val x0 = zoom.x(acc.toFloat() / total, 0f, size.width)
+                    val x1 = zoom.x((acc + s.durationMin).toFloat() / total, 0f, size.width)
+                    acc += s.durationMin
+                    val top = row * rowH + rowH * 0.18f
+                    val h = rowH * 0.64f
+                    val w = (x1 - x0).coerceAtLeast(1.5f)
+                    val isSel = i == selected
+                    drawRoundRect(
+                        color = sleepStageColor(s.stage).copy(alpha = if (selected < 0 || isSel) 1f else 0.55f),
+                        topLeft = Offset(x0, top), size = Size(w, h), cornerRadius = CornerRadius(4f, 4f),
+                    )
+                    // stepped connector line joining the stages into one continuous trace
+                    val yc = row * rowH + rowH * 0.5f
+                    if (prevYc >= 0f) drawLine(stepColor, Offset(x0, prevYc), Offset(x0, yc), strokeWidth = 2f)
+                    drawLine(stepColor, Offset(x0, yc), Offset(x1, yc), strokeWidth = 2f)
+                    prevYc = yc
+                    if (isSel) { selX0 = x0; selX1 = x0 + w }
+                }
+                // scrubber highlight over the selected segment
+                if (selX0 >= 0f) {
+                    drawRoundRect(
+                        color = outlineColor.copy(alpha = 0.9f),
+                        topLeft = Offset(selX0 - 1.5f, 0f), size = Size(selX1 - selX0 + 3f, plotH),
+                        cornerRadius = CornerRadius(5f, 5f), style = Stroke(width = 2f),
+                    )
+                    val cx = (selX0 + selX1) / 2f
+                    drawLine(scrubColor.copy(alpha = 0.5f), Offset(cx, 0f), Offset(cx, plotH), strokeWidth = 1.5f)
+                }
             }
-            // scrubber highlight over the selected segment
-            if (selX0 >= 0f) {
-                drawRoundRect(
-                    color = outlineColor.copy(alpha = 0.9f),
-                    topLeft = Offset(selX0 - 1.5f, 0f), size = Size(selX1 - selX0 + 3f, plotH),
-                    cornerRadius = CornerRadius(5f, 5f), style = Stroke(width = 2f),
-                )
-                val cx = (selX0 + selX1) / 2f
-                drawLine(scrubColor.copy(alpha = 0.5f), Offset(cx, 0f), Offset(cx, plotH), strokeWidth = 1.5f)
-            }
-            // start/end time labels
+            // start/end time labels for the visible window
+            val visStart = nightStart + (zoom.start * (nightEnd - nightStart)).toLong()
+            val visEnd = nightStart + ((zoom.start + zoom.width) * (nightEnd - nightStart)).toLong()
             val fmt = SimpleDateFormat("HH:mm", Locale.US)
             val paint = android.graphics.Paint().apply { isAntiAlias = true; color = axisArgb; textSize = 24f }
-            val startStr = fmt.format(Date(segments.first().epoch * 1000))
-            val end = segments.last().epoch + segments.last().durationMin * 60L
-            val endStr = fmt.format(Date(end * 1000))
+            val startStr = fmt.format(Date(visStart * 1000))
+            val endStr = fmt.format(Date(visEnd * 1000))
             drawContext.canvas.nativeCanvas.drawText(startStr, 0f, size.height - 2f, paint)
             drawContext.canvas.nativeCanvas.drawText(endStr, size.width - paint.measureText(endStr), size.height - 2f, paint)
         }

@@ -29,19 +29,38 @@ data class NightSleep(
 
 object SleepEngine {
 
-    /** Isolate the most recent night from all stored segments and analyse it. */
-    fun analyze(raw: List<SleepSegment>, goalHours: Float): NightSleep {
-        if (raw.isEmpty()) return NightSleep.EMPTY
-        val latest = raw.maxOf { it.epoch }
-        val night = raw.filter { it.epoch >= latest - 20 * 3600 }.sortedBy { it.epoch }
-        if (night.isEmpty()) return NightSleep.EMPTY
+    /** Segments more than this far apart belong to separate nights. */
+    private const val NIGHT_GAP_S = 6 * 3600L
 
+    /** Isolate the most recent night from all stored segments and analyse it. */
+    fun analyze(raw: List<SleepSegment>, goalHours: Float): NightSleep =
+        nights(raw, goalHours).firstOrNull() ?: NightSleep.EMPTY
+
+    /**
+     * Split all stored segments into distinct nights (a gap of over [NIGHT_GAP_S] starts a new one)
+     * and analyse each. Returns the nights that actually contain sleep, most recent first.
+     */
+    fun nights(raw: List<SleepSegment>, goalHours: Float): List<NightSleep> {
+        if (raw.isEmpty()) return emptyList()
+        val sorted = raw.sortedBy { it.epoch }
+        val groups = mutableListOf<MutableList<SleepSegment>>()
+        var prevEnd = Long.MIN_VALUE
+        for (s in sorted) {
+            if (groups.isEmpty() || s.epoch - prevEnd > NIGHT_GAP_S) groups.add(mutableListOf())
+            groups.last().add(s)
+            prevEnd = s.epoch + s.durationMin * 60L
+        }
+        return groups.mapNotNull { analyzeNight(it, goalHours) }.sortedByDescending { it.start }
+    }
+
+    private fun analyzeNight(night: List<SleepSegment>, goalHours: Float): NightSleep? {
+        if (night.isEmpty()) return null
         var deep = 0; var light = 0; var rem = 0; var awake = 0
         for (s in night) when (s.stage) {
             2 -> light += s.durationMin; 3 -> deep += s.durationMin; 4 -> rem += s.durationMin; 5 -> awake += s.durationMin
         }
         val asleep = deep + light + rem
-        if (asleep == 0) return NightSleep.EMPTY
+        if (asleep == 0) return null
         val start = night.first().epoch
         val end = night.last().epoch + night.last().durationMin * 60L
         val efficiency = (asleep.toFloat() / (asleep + awake).coerceAtLeast(1) * 100f).roundToInt()

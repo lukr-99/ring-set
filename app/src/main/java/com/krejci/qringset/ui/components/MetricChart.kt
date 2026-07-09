@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -18,7 +19,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,7 +47,10 @@ import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
-private fun DrawScope.series(points: List<Point>, a: Float, b: Float, color: Color, main: Boolean, axisArgb: Int) {
+private fun DrawScope.series(
+    points: List<Point>, a: Float, b: Float, color: Color, main: Boolean, axisArgb: Int,
+    markerCanvasFrac: Float? = null, unit: String = "", bubbleBgArgb: Int = 0,
+) {
     val n = points.size
     val i0 = floor(a * (n - 1)).toInt().coerceIn(0, n - 1)
     val i1 = ceil(b * (n - 1)).toInt().coerceIn(0, n - 1)
@@ -100,6 +108,35 @@ private fun DrawScope.series(points: List<Point>, a: Float, b: Float, color: Col
         drawCircle(color, 4.5f, Offset(lx, ly))
         drawCircle(color.copy(alpha = 0.4f), 9f, Offset(lx, ly), style = Stroke(2f))
     }
+
+    // ---- tap-to-read marker: crosshair + value/time bubble at the nearest point ----
+    if (main && markerCanvasFrac != null) {
+        val localX = ((markerCanvasFrac * size.width - leftInset) / (size.width - leftInset - rightPad)).coerceIn(0f, 1f)
+        val idx = (localX * (seg.size - 1)).roundToInt().coerceIn(0, seg.size - 1)
+        val mx = px(idx); val my = py(seg[idx].value)
+        drawLine(Color(axisArgb).copy(alpha = 0.45f), Offset(mx, plotTop), Offset(mx, plotBottom), 1.5f)
+        drawCircle(color, 5f, Offset(mx, my))
+        drawCircle(Color.White, 2f, Offset(mx, my))
+
+        val vStr = seg[idx].value.roundToInt().toString() + if (unit.isNotEmpty()) " $unit" else ""
+        val tStr = SimpleDateFormat("HH:mm", Locale.US).format(Date(seg[idx].epoch * 1000))
+        val tp = android.graphics.Paint().apply { isAntiAlias = true; textSize = 24f }
+        val bw = maxOf(tp.measureText(vStr), tp.measureText(tStr)) + 18f
+        val bh = 60f
+        val bx = (mx - bw / 2f).coerceIn(leftInset, (size.width - rightPad - bw).coerceAtLeast(leftInset))
+        val by = plotTop + 2f
+        drawContext.canvas.nativeCanvas.drawRoundRect(bx, by, bx + bw, by + bh, 9f, 9f,
+            android.graphics.Paint().apply { isAntiAlias = true; this.color = bubbleBgArgb })
+        drawContext.canvas.nativeCanvas.drawRoundRect(bx, by, bx + bw, by + bh, 9f, 9f,
+            android.graphics.Paint().apply {
+                isAntiAlias = true; this.color = color.copy(alpha = 0.6f).toArgb()
+                style = android.graphics.Paint.Style.STROKE; strokeWidth = 1.5f
+            })
+        tp.color = color.toArgb()
+        drawContext.canvas.nativeCanvas.drawText(vStr, bx + 9f, by + 25f, tp)
+        tp.color = axisArgb
+        drawContext.canvas.nativeCanvas.drawText(tStr, bx + 9f, by + 49f, tp)
+    }
 }
 
 @Composable
@@ -108,6 +145,7 @@ fun MetricChart(
     color: Color,
     window: Pair<Float, Float>,
     onWindow: (Pair<Float, Float>) -> Unit,
+    unit: String = "",
 ) {
     if (points.size < 2) {
         Box(Modifier.fillMaxWidth().height(250.dp), contentAlignment = Alignment.Center) {
@@ -116,9 +154,21 @@ fun MetricChart(
         return
     }
     val axisArgb = MaterialTheme.colorScheme.onSurfaceVariant.toArgb()
+    val bubbleBgArgb = MaterialTheme.colorScheme.surfaceVariant.toArgb()
     val win = rememberUpdatedState(window)
+    // Tap/drag a point on the main chart to read it; cleared when the visible window changes.
+    var marker by remember(points, window) { mutableStateOf<Float?>(null) }
     Column {
-        Canvas(Modifier.fillMaxWidth().height(200.dp)) { series(points, window.first, window.second, color, true, axisArgb) }
+        Canvas(
+            Modifier.fillMaxWidth().height(200.dp)
+                .pointerInput(points) { detectTapGestures { pos -> marker = pos.x / size.width } }
+                .pointerInput(points) {
+                    detectDragGestures(
+                        onDragStart = { pos -> marker = pos.x / size.width },
+                        onDrag = { change, _ -> marker = change.position.x / size.width },
+                    )
+                },
+        ) { series(points, window.first, window.second, color, true, axisArgb, marker, unit, bubbleBgArgb) }
         Spacer(Modifier.height(8.dp))
         BoxWithConstraints(
             Modifier.fillMaxWidth().height(50.dp).clip(RoundedCornerShape(12.dp))

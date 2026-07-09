@@ -167,7 +167,7 @@ private fun WorkoutDetailDialog(w: WorkoutEntity, onDismiss: () -> Unit) {
                     fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(10.dp))
                 if (points.size >= 2) {
-                    MetricChart(points, metricColor(MetricType.HR), window) { window = it }
+                    MetricChart(points, metricColor(MetricType.HR), window, onWindow = { window = it }, unit = "bpm")
                     Spacer(Modifier.height(10.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         DetailStat("Avg", w.avgHr, Modifier.weight(1f))

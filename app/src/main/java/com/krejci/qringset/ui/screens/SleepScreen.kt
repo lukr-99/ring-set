@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -37,6 +38,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.krejci.qringset.data.MetricType
 import com.krejci.qringset.data.Point
 import com.krejci.qringset.data.SleepSegment
+import com.krejci.qringset.domain.NightSleep
 import com.krejci.qringset.domain.SleepEngine
 import com.krejci.qringset.ui.RingViewModel
 import com.krejci.qringset.ui.SleepColor
@@ -60,9 +62,11 @@ fun SleepScreen(vm: RingViewModel) {
     val hr by vm.samples(MetricType.HR).collectAsStateWithLifecycle(emptyList())
     val spo2 by vm.samples(MetricType.SPO2).collectAsStateWithLifecycle(emptyList())
 
-    val night = remember(segEntities, profile.goalSleepHours) {
-        SleepEngine.analyze(segEntities.map { SleepSegment(it.epoch, it.stage, it.durationMin) }, profile.goalSleepHours)
+    val nights = remember(segEntities, profile.goalSleepHours) {
+        SleepEngine.nights(segEntities.map { SleepSegment(it.epoch, it.stage, it.durationMin) }, profile.goalSleepHours)
     }
+    var selectedNight by remember(nights) { mutableStateOf(0) }
+    val night = nights.getOrElse(selectedNight) { NightSleep.EMPTY }
     val sleepHr = remember(hr, night) {
         hr.filter { it.epoch in night.start..night.end }.map { Point(it.epoch, it.value.toFloat()) }
     }
@@ -101,6 +105,14 @@ fun SleepScreen(vm: RingViewModel) {
                 Text("${night.efficiencyPct}% efficient · ${night.awakenings} wake-ups", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             ArcGauge(night.score / 100f, SleepColor, night.score.toString(), "score", diameter = 128)
+        }
+    }
+
+    // ---- recent nights ----
+    if (nights.size > 1) {
+        SleepLabel("Recent nights")
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(18.dp)) {
+            NightStrip(nights, selectedNight, Modifier.padding(14.dp)) { selectedNight = it }
         }
     }
 
@@ -171,6 +183,41 @@ fun SleepScreen(vm: RingViewModel) {
     }
 }
 
+/** A horizontal strip of the last few nights (sleep-duration bars); tap one to inspect it. */
+@Composable
+private fun NightStrip(nights: List<NightSleep>, selected: Int, modifier: Modifier = Modifier, onSelect: (Int) -> Unit) {
+    val shown = nights.take(7)
+    val maxMin = shown.maxOf { it.asleepMin }.coerceAtLeast(1)
+    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        // display oldest → newest (left → right); index i maps straight into [nights]
+        for (i in shown.indices.reversed()) {
+            val n = shown[i]
+            val on = i == selected
+            Column(
+                Modifier.weight(1f).clip(RoundedCornerShape(12.dp))
+                    .background(if (on) SleepColor.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable { onSelect(i) }.padding(vertical = 9.dp, horizontal = 2.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(fmtDow(n.start), fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
+                    color = if (on) SleepColor else MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(6.dp))
+                Box(Modifier.height(42.dp).width(12.dp), contentAlignment = Alignment.BottomCenter) {
+                    Box(
+                        Modifier.width(12.dp)
+                            .fillMaxHeight((n.asleepMin.toFloat() / maxMin).coerceIn(0.08f, 1f))
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(if (on) SleepColor else SleepColor.copy(alpha = 0.4f)),
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(fmtHShort(n.asleepMin), fontSize = 10.sp,
+                    color = if (on) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
 @Composable
 private fun LegendDot(stage: Int) {
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -237,6 +284,8 @@ private fun SleepLabel(text: String) =
         letterSpacing = 1.4.sp, modifier = Modifier.padding(top = 22.dp, bottom = 8.dp, start = 2.dp))
 
 private fun fmtHM(min: Int): String { val h = min / 60; val m = min % 60; return if (h > 0) "${h}h ${m}m" else "${m}m" }
+private fun fmtHShort(min: Int): String { val h = min / 60; val m = min % 60; return if (m >= 30) "${h + 1}h" else "${h}h" }
+private fun fmtDow(e: Long) = SimpleDateFormat("EEE", Locale.US).format(Date(e * 1000))
 private fun fmtHours(h: Float): String { val i = h.toInt(); val m = ((h - i) * 60).roundToInt(); return if (m > 0) "${i}h ${m}m" else "${i}h" }
 private fun fmtTime(e: Long) = SimpleDateFormat("HH:mm", Locale.US).format(Date(e * 1000))
 private fun fmtDay(e: Long) = SimpleDateFormat("MMM d", Locale.US).format(Date(e * 1000))

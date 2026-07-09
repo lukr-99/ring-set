@@ -71,9 +71,9 @@ fun StatsScreen(vm: RingViewModel) {
     Spacer(Modifier.height(14.dp))
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(20.dp)) {
         Column(Modifier.padding(14.dp)) {
-            MetricChart(ranged, color, window) { window = it }
+            MetricChart(ranged, color, window, onWindow = { window = it }, unit = metric.unit)
             Spacer(Modifier.height(4.dp))
-            Text("Drag the window to scrub · pull the edges to zoom",
+            Text("Tap the chart to read a point · drag the window below to scrub · pull the edges to zoom",
                 color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp,
                 textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
         }
