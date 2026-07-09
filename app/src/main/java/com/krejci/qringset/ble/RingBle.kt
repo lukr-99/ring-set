@@ -47,6 +47,10 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
     val liveHr = MutableStateFlow<Int?>(null)
     /** Human-readable state of the live session ("Connecting…", "Measuring…", errors). */
     val liveStatus = MutableStateFlow("")
+    /** True while the ring is in camera-shutter mode (a shake fires [onCameraShutter]). */
+    val cameraMode = MutableStateFlow(false)
+    /** Invoked (on the main thread) each time the ring signals a "take photo" gesture. */
+    var onCameraShutter: (() -> Unit)? = null
 
     private var gatt: BluetoothGatt? = null
     private var writeChar: BluetoothGattCharacteristic? = null
@@ -60,6 +64,8 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
     private var liveOn = false
     private var liveRequested = false
     private var liveTick = 0
+    private var cameraOn = false
+    private var cameraKeepAlive: Runnable? = null
 
     // sync state
     private enum class Stage { HR, STEPS, SPO2, SLEEP, STRESS, HRV }
@@ -107,6 +113,16 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
         private const val CMD_HR_POLL_RSP = 0x9E // 30 | 0x80 — the ring's reply to the poll
         private const val CMD_HR_STOP = 0x6A
         private const val HR_TYPE = 0x01
+        // Camera shutter (Oudmon CameraReq/CameraNotifyRsp, cmd 0x02). We send:
+        //   enter camera UI = [0x02, 4] · keep-screen-on keep-alive = [0x02, 5] · finish = [0x02, 6]
+        // The ring notifies back on cmd 0x02 with action at byte[1]:
+        //   1 = entered UI · 2 = TAKE PHOTO (the shake gesture) · 3 = finished.
+        private const val CMD_CAMERA = 0x02
+        private const val CAM_ENTER = 0x04
+        private const val CAM_KEEP = 0x05
+        private const val CAM_FINISH = 0x06
+        private const val CAM_TAKE_PHOTO = 0x02
+        private const val CAM_KEEPALIVE_MS = 2_000L
         private val HR_VALID = 30..220
         private const val CONNECT_TIMEOUT_MS = 12_000L
         private const val RECONNECT_DELAY_MS = 1_600L
@@ -203,6 +219,42 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
         handler.postDelayed(liveKeepAlive!!, LIVE_KEEPALIVE_MS)
     }
 
+    // ---------- camera shutter ----------
+
+    /**
+     * Put the ring into camera mode: it shows a shutter icon and a shake now emits a "take photo"
+     * gesture that fires [onCameraShutter]. A periodic keep-alive matches QRing (every 2 s).
+     */
+    fun enterCameraMode() {
+        cameraOn = true
+        cameraMode.value = true
+        withRing {
+            doWrite(packet(byteArrayOf(CMD_CAMERA.toByte(), CAM_ENTER.toByte())))
+            scheduleCameraKeepAlive()
+        }
+    }
+
+    fun exitCameraMode() {
+        cameraOn = false; cameraMode.value = false
+        cameraKeepAlive?.let { handler.removeCallbacks(it) }; cameraKeepAlive = null
+        if (ready && writeChar != null) doWrite(packet(byteArrayOf(CMD_CAMERA.toByte(), CAM_FINISH.toByte())))
+    }
+
+    private fun scheduleCameraKeepAlive() {
+        cameraKeepAlive?.let { handler.removeCallbacks(it) }
+        cameraKeepAlive = Runnable {
+            if (cameraOn && ready) { doWrite(packet(byteArrayOf(CMD_CAMERA.toByte(), CAM_KEEP.toByte()))); scheduleCameraKeepAlive() }
+        }
+        handler.postDelayed(cameraKeepAlive!!, CAM_KEEPALIVE_MS)
+    }
+
+    // StartHeartRateRsp shares no opcode with this; camera notifies come back on cmd 0x02.
+    private fun handleCameraNotify(r: ByteArray) {
+        if (r.size < 2) return
+        Log.d(LIVE_TAG, "camera <- ${hex(r)}")
+        if ((r[1].toInt() and 0xFF) == CAM_TAKE_PHOTO) { status.value = "📷 Shutter"; onCameraShutter?.invoke() }
+    }
+
     fun disconnect() = closeGatt()
 
     // ---------- connection ----------
@@ -246,6 +298,8 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
         // responses share one thread. Battery only when idle, to not collide with the sync's
         // first request.
         handler.post { if (pending != null) runPending() else readBatteryNow() }
+        // If the user left camera mode on, re-arm it after a reconnect.
+        if (cameraOn) handler.post { doWrite(packet(byteArrayOf(CMD_CAMERA.toByte(), CAM_ENTER.toByte()))); scheduleCameraKeepAlive() }
     }
 
     @SuppressLint("MissingPermission")
@@ -304,6 +358,7 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
     private fun handleResponse(r: ByteArray) {
         if (r.isEmpty()) return
         when (r[0].toInt() and 0xFF) {
+            CMD_CAMERA -> handleCameraNotify(r)
             CMD_BATTERY -> if (r.size >= 3) battery.value = BatteryInfo(r[1].toInt() and 0xFF, (r[2].toInt() and 0xFF) == 1)
             CMD_HR_LOG -> if (r.size >= 4) interval.value = IntervalInfo((r[2].toInt() and 0xFF) == 1, r[3].toInt() and 0xFF).also {
                 status.value = "Ring is set to ${it.minutes} min (${if (it.enabled) "ON" else "OFF"})"
@@ -548,6 +603,7 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
     private fun closeGatt() {
         cancelConnectTimeout()
         liveOn = false; liveKeepAlive?.let { handler.removeCallbacks(it) }; liveKeepAlive = null; liveHr.value = null
+        cameraKeepAlive?.let { handler.removeCallbacks(it) }; cameraKeepAlive = null
         try { gatt?.disconnect(); gatt?.close() } catch (_: Exception) {}
         gatt = null; writeChar = null; v2WriteChar = null; ready = false; connecting = false; conn.value = Conn.DISCONNECTED
     }

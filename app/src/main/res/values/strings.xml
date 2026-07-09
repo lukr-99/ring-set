@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Ring Set</string>
+    <string name="camera_a11y_label">Ring Set — camera shutter</string>
+    <string name="camera_a11y_desc">Lets a ring gesture snap a photo by tapping the shutter in your camera app. Ring Set only taps the shutter when your ring signals; it does not read your screen content.</string>
 </resources>

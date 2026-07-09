@@ -31,6 +31,21 @@
             </intent-filter>
         </activity>
 
+        <!-- Taps the camera shutter when the ring signals a photo gesture. Runs in this app's
+             process, which keeps the BLE link alive in the background while you're in the camera. -->
+        <service
+            android:name=".CameraShutterService"
+            android:exported="true"
+            android:label="@string/camera_a11y_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/camera_accessibility" />
+        </service>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

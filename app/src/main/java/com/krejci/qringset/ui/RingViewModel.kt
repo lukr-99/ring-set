@@ -12,6 +12,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.krejci.qringset.BuildConfig
+import com.krejci.qringset.CameraShutterService
 import com.krejci.qringset.Notifier
 import com.krejci.qringset.ble.RingBle
 import com.krejci.qringset.data.ActivityType
@@ -44,6 +45,9 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
     val syncStatus = ble.syncStatus
     val liveHr = ble.liveHr
     val liveStatus = ble.liveStatus
+    val cameraMode = ble.cameraMode
+    /** Whether the accessibility service that taps the shutter is enabled. */
+    val a11yConnected = CameraShutterService.connected
 
     // ---- user profile ----
     private val profileStore = UserProfileStore(prefs)
@@ -93,7 +97,18 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
     val scanResults = MutableStateFlow<List<ScannedRing>>(emptyList())
     val scanning = MutableStateFlow(false)
 
+    // ---- camera shutter (ring gesture → tap the system camera's shutter) ----
+    fun enableCameraGesture() = ble.enterCameraMode()
+    fun disableCameraGesture() = ble.exitCameraMode()
+
+    /** Fire a shutter tap after a short delay — used by the "Test" button once the camera is open. */
+    fun testCameraShutter() {
+        viewModelScope.launch { delay(2500); CameraShutterService.instance?.triggerShutter() }
+    }
+
     init {
+        // When the ring reports a shake in camera mode, tap the foreground camera's shutter.
+        ble.onCameraShutter = { CameraShutterService.instance?.triggerShutter() }
         viewModelScope.launch { repo.rememberRing(ble.mac, "R04") }
         // Append live HR into the current workout while one is running.
         viewModelScope.launch {
