@@ -42,6 +42,7 @@ import com.krejci.qringset.data.SleepSegment
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 /** Sleep-stage accent colors. Stage codes: 2 light, 3 deep, 4 rem, 5 awake. */
 fun sleepStageColor(stage: Int): Color = when (stage) {
@@ -151,22 +152,40 @@ fun Hypnogram(segments: List<SleepSegment>, modifier: Modifier = Modifier) {
     }
 }
 
-/** Compact read-only line chart (no axes/scrubbing) for the sleep HR trace. */
+/**
+ * Compact read-only line chart for an HR trace. When [labeled] it also draws the min/max value on
+ * a left axis with faint top/bottom gridlines and an endpoint dot.
+ */
 @Composable
-fun MiniLine(points: List<Point>, color: Color, modifier: Modifier = Modifier) {
+fun MiniLine(points: List<Point>, color: Color, modifier: Modifier = Modifier, labeled: Boolean = false, heightDp: Int = 64) {
     if (points.size < 2) return
-    Canvas(modifier.fillMaxWidth().height(64.dp)) {
+    val axisArgb = MaterialTheme.colorScheme.onSurfaceVariant.toArgb()
+    val gridColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f)
+    Canvas(modifier.fillMaxWidth().height(heightDp.dp)) {
         val lo = points.minOf { it.value }; val hi = points.maxOf { it.value }
         val span = (hi - lo).coerceAtLeast(1f)
-        fun px(i: Int) = i.toFloat() / (points.size - 1) * size.width
-        fun py(v: Float) = size.height - (v - lo) / span * (size.height * 0.82f) - size.height * 0.09f
+        val leftInset = if (labeled) 42f else 0f
+        val pad = if (labeled) 12f else size.height * 0.09f
+        val plotTop = pad; val plotBottom = size.height - pad
+        fun px(i: Int) = leftInset + i.toFloat() / (points.size - 1) * (size.width - leftInset)
+        fun py(v: Float) = plotBottom - (v - lo) / span * (plotBottom - plotTop)
+
+        if (labeled) {
+            drawLine(gridColor, Offset(leftInset, plotTop), Offset(size.width, plotTop), 1f)
+            drawLine(gridColor, Offset(leftInset, plotBottom), Offset(size.width, plotBottom), 1f)
+            val paint = android.graphics.Paint().apply { this.color = axisArgb; textSize = 22f; isAntiAlias = true }
+            drawContext.canvas.nativeCanvas.drawText(hi.roundToInt().toString(), 2f, plotTop + 18f, paint)
+            drawContext.canvas.nativeCanvas.drawText(lo.roundToInt().toString(), 2f, plotBottom, paint)
+        }
+
         val line = Path().apply { points.forEachIndexed { i, p -> if (i == 0) moveTo(px(i), py(p.value)) else lineTo(px(i), py(p.value)) } }
         val fill = Path().apply {
-            moveTo(px(0), size.height); points.forEachIndexed { i, p -> lineTo(px(i), py(p.value)) }
-            lineTo(px(points.size - 1), size.height); close()
+            moveTo(px(0), plotBottom); points.forEachIndexed { i, p -> lineTo(px(i), py(p.value)) }
+            lineTo(px(points.size - 1), plotBottom); close()
         }
-        drawPath(fill, Brush.verticalGradient(listOf(color.copy(alpha = 0.30f), color.copy(alpha = 0f))))
+        drawPath(fill, Brush.verticalGradient(listOf(color.copy(alpha = 0.30f), color.copy(alpha = 0f)), startY = plotTop, endY = plotBottom))
         drawPath(line, color, style = Stroke(width = 2.4f))
+        if (labeled) drawCircle(color, 4f, Offset(px(points.size - 1), py(points.last().value)))
     }
 }
 

@@ -88,7 +88,8 @@ fun ActivityScreen(vm: RingViewModel) {
                 }
                 if (samples.size >= 2) {
                     Spacer(Modifier.height(14.dp))
-                    MiniLine(samples.mapIndexed { i, v -> Point(i.toLong(), v.toFloat()) }, metricColor(MetricType.HR))
+                    MiniLine(samples.mapIndexed { i, v -> Point(i.toLong(), v.toFloat()) }, metricColor(MetricType.HR),
+                        labeled = true, heightDp = 120)
                 }
             } else if (conn != Conn.CONNECTED) {
                 Spacer(Modifier.height(6.dp))
