@@ -24,6 +24,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Adjust
+import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Dashboard
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FitnessCenter
@@ -73,6 +74,7 @@ enum class Screen(val label: String, val icon: ImageVector) {
     OVERVIEW("Home", Icons.Rounded.Dashboard),
     STATS("Stats", Icons.Rounded.ShowChart),
     ACTIVITY("Activity", Icons.Rounded.FitnessCenter),
+    SLEEP("Sleep", Icons.Rounded.Bedtime),
     DATA("Data", Icons.Rounded.Sync),
     RING("Ring", Icons.Rounded.Adjust),
     CONTROL("Control", Icons.Rounded.Tune),
@@ -91,6 +93,7 @@ fun App(vm: RingViewModel, onExportShare: () -> Unit, onScan: () -> Unit) {
                 Screen.OVERVIEW -> OverviewScreen(vm)
                 Screen.STATS -> StatsScreen(vm)
                 Screen.ACTIVITY -> ActivityScreen(vm)
+                Screen.SLEEP -> SleepScreen(vm)
                 Screen.DATA -> DataScreen(vm, onExportShare)
                 Screen.RING -> RingScreen(vm, onScan)
                 Screen.CONTROL -> ControlScreen(vm)
