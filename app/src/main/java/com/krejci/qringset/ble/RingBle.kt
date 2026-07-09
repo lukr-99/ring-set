@@ -59,6 +59,7 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
     private var liveKeepAlive: Runnable? = null
     private var liveOn = false
     private var liveRequested = false
+    private var liveTick = 0
 
     // sync state
     private enum class Stage { HR, STEPS, SPO2, SLEEP, STRESS, HRV }
@@ -111,6 +112,7 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
         private const val RECONNECT_DELAY_MS = 1_600L
         private const val SYNC_STALL_MS = 8_000L
         private const val LIVE_KEEPALIVE_MS = 1_000L
+        private const val LIVE_RENEW_TICKS = 33   // the ring measures in ~35s bursts, so re-trigger just before it idles
         private const val LIVE_TAG = "RingLive"
     }
 
@@ -169,6 +171,7 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
             liveOn = true
             liveRequested = false
             liveHr.value = null
+            liveTick = 0
             liveStatus.value = "Measuring — hold still, ~30s to lock"
             doWrite(packet(byteArrayOf(CMD_HR_START.toByte(), HR_TYPE.toByte(), 0x00)))
             scheduleLiveKeepAlive()
@@ -188,6 +191,12 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
         liveKeepAlive = Runnable {
             if (liveOn && ready) {
                 doWrite(packet(byteArrayOf(CMD_HR_POLL.toByte(), 0x03)))
+                // The ring only measures in short bursts then idles, so cleanly restart the
+                // measurement (stop then start) just before each burst ends to keep it going.
+                if (++liveTick % LIVE_RENEW_TICKS == 0) {
+                    doWrite(packet(byteArrayOf(CMD_HR_STOP.toByte(), HR_TYPE.toByte(), 0, 0)))
+                    handler.postDelayed({ if (liveOn && ready) doWrite(packet(byteArrayOf(CMD_HR_START.toByte(), HR_TYPE.toByte(), 0x00))) }, 200)
+                }
                 scheduleLiveKeepAlive()
             }
         }
