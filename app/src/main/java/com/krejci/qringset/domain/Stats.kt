@@ -1,5 +1,7 @@
 package com.krejci.qringset.domain
 
+import kotlin.math.roundToInt
+
 /** Summary numbers a stat tile or insight can show for a metric over some window. */
 data class MetricSummary(
     val count: Int,
@@ -32,8 +34,11 @@ data class SleepSummary(val totalMin: Int, val deepMin: Int, val remMin: Int, va
     companion object { val EMPTY = SleepSummary(0, 0, 0, 0, 0) }
 }
 
-/** Overall daily wellness score (0–100) with a friendly band label. */
-data class ActivityScore(val score: Int, val label: String)
+/** One weighted contribution to the wellness score. */
+data class ScorePart(val label: String, val got: Float, val max: Float, val detail: String)
+
+/** Overall daily wellness score (0–100) with a friendly band label and its breakdown. */
+data class ActivityScore(val score: Int, val label: String, val parts: List<ScorePart> = emptyList())
 
 object StatsEngine {
     fun summarize(values: List<Int>): MetricSummary {
@@ -45,6 +50,26 @@ object StatsEngine {
             max = values.max(),
             latest = values.last(),
         )
+    }
+
+    fun median(values: List<Int>): Int? {
+        if (values.isEmpty()) return null
+        val s = values.sorted(); val n = s.size
+        return if (n % 2 == 1) s[n / 2] else (s[n / 2 - 1] + s[n / 2]) / 2
+    }
+
+    /** Population standard deviation — a plain "variability" number. */
+    fun stdev(values: List<Int>): Double {
+        if (values.size < 2) return 0.0
+        val m = values.average()
+        return kotlin.math.sqrt(values.sumOf { (it - m) * (it - m) } / values.size)
+    }
+
+    /** Direction of change: mean of the last third minus the first third (0 if too few points). */
+    fun trend(values: List<Int>): Int {
+        if (values.size < 6) return 0
+        val t = values.size / 3
+        return (values.takeLast(t).average() - values.take(t).average()).roundToInt()
     }
 
     /**
@@ -101,30 +126,35 @@ object StatsEngine {
         sleepHours: Float, goalSleepHours: Float,
         restingHr: Int?, avgHrv: Int?, age: Int?,
     ): ActivityScore {
-        var weight = 0f; var got = 0f
+        val parts = mutableListOf<ScorePart>()
 
         // Steps — 40%
         if (stepsToday != null && goalSteps > 0) {
-            weight += 40f; got += 40f * (stepsToday.toFloat() / goalSteps).coerceIn(0f, 1f)
+            val f = (stepsToday.toFloat() / goalSteps).coerceIn(0f, 1f)
+            parts += ScorePart("Steps", 40f * f, 40f, "$stepsToday / $goalSteps today")
         }
         // Sleep — 30%, peaks at the goal
         if (sleepHours > 0f && goalSleepHours > 0f) {
             val closeness = (1f - (kotlin.math.abs(sleepHours - goalSleepHours) / goalSleepHours)).coerceIn(0f, 1f)
-            weight += 30f; got += 30f * closeness
+            parts += ScorePart("Sleep", 30f * closeness, 30f, "${fmtH(sleepHours)} vs ${fmtH(goalSleepHours)} goal")
         }
         // Resting HR — 20%, lower is better
         restingHr?.let { rhr ->
-            val part = when { rhr <= 55 -> 1f; rhr <= 65 -> 0.85f; rhr <= 75 -> 0.65f; rhr <= 85 -> 0.4f; else -> 0.15f }
-            weight += 20f; got += 20f * part
+            val f = when { rhr <= 55 -> 1f; rhr <= 65 -> 0.85f; rhr <= 75 -> 0.65f; rhr <= 85 -> 0.4f; else -> 0.15f }
+            parts += ScorePart("Resting HR", 20f * f, 20f, "$rhr bpm")
         }
         // HRV — 10%, age-adjusted
         avgHrv?.let { h ->
             val healthy = when { age == null -> 30; age < 35 -> 40; age < 50 -> 30; else -> 20 }
-            weight += 10f; got += 10f * (h.toFloat() / healthy).coerceIn(0f, 1f)
+            parts += ScorePart("HRV", 10f * (h.toFloat() / healthy).coerceIn(0f, 1f), 10f, "${h}ms")
         }
 
+        val weight = parts.sumOf { it.max.toDouble() }.toFloat()
+        val got = parts.sumOf { it.got.toDouble() }.toFloat()
         val score = if (weight == 0f) 0 else (got / weight * 100f).toInt().coerceIn(0, 100)
         val label = when { weight == 0f -> "No data"; score >= 80 -> "Excellent"; score >= 60 -> "Good"; score >= 40 -> "Fair"; else -> "Low" }
-        return ActivityScore(score, label)
+        return ActivityScore(score, label, parts)
     }
+
+    private fun fmtH(h: Float): String { val i = h.toInt(); val m = ((h - i) * 60).roundToInt(); return if (m > 0) "${i}h ${m}m" else "${i}h" }
 }

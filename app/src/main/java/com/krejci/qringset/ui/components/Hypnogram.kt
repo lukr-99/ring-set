@@ -114,6 +114,8 @@ fun Hypnogram(segments: List<SleepSegment>, modifier: Modifier = Modifier) {
             val rowH = plotH / 4
             var acc = 0
             var selX0 = -1f; var selX1 = -1f
+            var prevYc = -1f
+            val stepColor = scrubColor.copy(alpha = 0.35f)
             for ((i, s) in segments.withIndex()) {
                 val row = STAGE_ROW[s.stage]
                 if (row == null) { acc += s.durationMin; continue }
@@ -122,12 +124,17 @@ fun Hypnogram(segments: List<SleepSegment>, modifier: Modifier = Modifier) {
                 acc += s.durationMin
                 val top = row * rowH + rowH * 0.18f
                 val h = rowH * 0.64f
-                val w = (x1 - x0 - 1.5f).coerceAtLeast(1.5f)
+                val w = (x1 - x0).coerceAtLeast(1.5f)
                 val isSel = i == selected
                 drawRoundRect(
                     color = sleepStageColor(s.stage).copy(alpha = if (selected < 0 || isSel) 1f else 0.55f),
                     topLeft = Offset(x0, top), size = Size(w, h), cornerRadius = CornerRadius(4f, 4f),
                 )
+                // stepped connector line joining the stages into one continuous trace
+                val yc = row * rowH + rowH * 0.5f
+                if (prevYc >= 0f) drawLine(stepColor, Offset(x0, prevYc), Offset(x0, yc), strokeWidth = 2f)
+                drawLine(stepColor, Offset(x0, yc), Offset(x1, yc), strokeWidth = 2f)
+                prevYc = yc
                 if (isSel) { selX0 = x0; selX1 = x0 + w }
             }
             // scrubber highlight over the selected segment

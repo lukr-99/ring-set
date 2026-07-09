@@ -42,8 +42,8 @@ import com.krejci.qringset.ui.RingViewModel
 import com.krejci.qringset.ui.SleepColor
 import com.krejci.qringset.ui.components.ArcGauge
 import com.krejci.qringset.ui.components.Hypnogram
-import com.krejci.qringset.ui.components.MiniLine
 import com.krejci.qringset.ui.components.ScreenHeader
+import com.krejci.qringset.ui.components.SleepVitals
 import com.krejci.qringset.ui.components.SleepGoalDial
 import com.krejci.qringset.ui.components.sleepStageColor
 import com.krejci.qringset.ui.components.sleepStageLabel
@@ -68,6 +68,7 @@ fun SleepScreen(vm: RingViewModel) {
     }
     val avgHr = if (sleepHr.isEmpty()) null else sleepHr.map { it.value }.average().roundToInt()
     val spo2InWindow = remember(spo2, night) { spo2.filter { it.epoch in night.start..night.end } }
+    val sleepSpo2 = remember(spo2InWindow) { spo2InWindow.map { Point(it.epoch, it.value.toFloat()) } }
     val avgSpo2 = if (spo2InWindow.isEmpty()) null else spo2InWindow.map { it.value }.average().roundToInt()
 
     var showGoal by remember { mutableStateOf(false) }
@@ -127,19 +128,19 @@ fun SleepScreen(vm: RingViewModel) {
         }
     }
 
-    // ---- sleep vitals ----
+    // ---- sleep vitals: HR + SpO2 overlaid on their own axes ----
     SleepLabel("During sleep")
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(18.dp)) {
-        Column(Modifier.padding(16.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Heart rate", Modifier.weight(1f), fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-                Text(avgHr?.let { "$it bpm avg" } ?: "—", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+        Column(Modifier.padding(14.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                LegendVital(metricColor(MetricType.HR), "Heart rate", avgHr?.let { "$it bpm" } ?: "—")
+                LegendVital(metricColor(MetricType.SPO2), "Blood oxygen", avgSpo2?.let { "$it%" } ?: "—")
             }
-            if (sleepHr.size >= 2) { Spacer(Modifier.height(8.dp)); MiniLine(sleepHr, metricColor(MetricType.HR)) }
-            Spacer(Modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Blood oxygen", Modifier.weight(1f), fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-                Text(avgSpo2?.let { "$it% avg" } ?: "—", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+            Spacer(Modifier.height(10.dp))
+            if (sleepHr.size >= 2 || sleepSpo2.size >= 2) {
+                SleepVitals(sleepHr, sleepSpo2, metricColor(MetricType.HR), metricColor(MetricType.SPO2))
+            } else {
+                Text("Not enough overnight HR/SpO₂ to chart.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -176,6 +177,18 @@ private fun LegendDot(stage: Int) {
         Box(Modifier.size(9.dp).clip(CircleShape).background(sleepStageColor(stage)))
         Spacer(Modifier.width(5.dp))
         Text(sleepStageLabel(stage), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun LegendVital(color: Color, label: String, value: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(9.dp).clip(CircleShape).background(color))
+        Spacer(Modifier.width(6.dp))
+        Column {
+            Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+        }
     }
 }
 

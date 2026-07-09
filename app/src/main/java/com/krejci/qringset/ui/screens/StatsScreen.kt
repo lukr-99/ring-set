@@ -34,9 +34,9 @@ import com.krejci.qringset.data.MetricType
 import com.krejci.qringset.data.Point
 import com.krejci.qringset.domain.StatsEngine
 import com.krejci.qringset.ui.RingViewModel
-import com.krejci.qringset.ui.components.ChoiceChip
 import com.krejci.qringset.ui.components.MetricChart
 import com.krejci.qringset.ui.components.ScreenHeader
+import com.krejci.qringset.ui.components.SegmentedTabs
 import com.krejci.qringset.ui.metricColor
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -65,12 +65,8 @@ fun StatsScreen(vm: RingViewModel) {
     Spacer(Modifier.height(14.dp))
     MetricChips(metric) { metric = it; window = 0f to 1f }
 
-    Spacer(Modifier.height(8.dp))
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        ranges.forEachIndexed { i, (label, _) ->
-            ChoiceChip(label, i == rangeIdx, Modifier.weight(1f)) { rangeIdx = i; window = 0f to 1f }
-        }
-    }
+    Spacer(Modifier.height(10.dp))
+    SegmentedTabs(ranges.map { it.first }, rangeIdx) { rangeIdx = it; window = 0f to 1f }
 
     Spacer(Modifier.height(14.dp))
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(20.dp)) {
@@ -89,14 +85,26 @@ fun StatsScreen(vm: RingViewModel) {
         val i1 = ceil(window.second * (n - 1)).toInt().coerceIn(0, n - 1)
         ranged.subList(i0, (i1 + 1).coerceAtMost(n))
     } else ranged
-    val summary = StatsEngine.summarize(slice.map { it.value.roundToInt() })
+    val vals = slice.map { it.value.roundToInt() }
+    val summary = StatsEngine.summarize(vals)
+    val median = StatsEngine.median(vals)
+    val sd = StatsEngine.stdev(vals)
+    val tr = StatsEngine.trend(vals)
+    val has = summary.count > 0
 
     Spacer(Modifier.height(12.dp))
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-        StatTile("Average", if (summary.count > 0) summary.avg.roundToInt().toString() else "—", metric.unit, color, Modifier.weight(1f))
-        StatTile("Min", if (summary.count > 0) summary.min.toString() else "—", "in view", color, Modifier.weight(1f))
-        StatTile("Max", if (summary.count > 0) summary.max.toString() else "—", "in view", color, Modifier.weight(1f))
+        StatTile("Average", if (has) summary.avg.roundToInt().toString() else "—", metric.unit, color, Modifier.weight(1f))
+        StatTile("Min", if (has) summary.min.toString() else "—", "in view", color, Modifier.weight(1f))
+        StatTile("Max", if (has) summary.max.toString() else "—", "in view", color, Modifier.weight(1f))
         StatTile("Latest", summary.latest?.toString() ?: "—", metric.unit, color, Modifier.weight(1f))
+    }
+    Spacer(Modifier.height(9.dp))
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+        StatTile("Median", if (has) median?.toString() ?: "—" else "—", metric.unit, color, Modifier.weight(1f))
+        StatTile("Spread", if (has) (summary.max - summary.min).toString() else "—", metric.unit, color, Modifier.weight(1f))
+        StatTile("Std dev", if (summary.count > 1) "±${sd.roundToInt()}" else "—", metric.unit, color, Modifier.weight(1f))
+        StatTile("Trend", if (tr == 0) "—" else if (tr > 0) "↑$tr" else "↓${-tr}", "vs earlier", color, Modifier.weight(1f))
     }
 }
 
