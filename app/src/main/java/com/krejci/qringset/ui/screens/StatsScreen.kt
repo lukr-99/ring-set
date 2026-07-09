@@ -26,7 +26,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -58,9 +57,9 @@ fun StatsScreen(vm: RingViewModel) {
     }
 
     ScreenHeader("Insights", "${metric.label} · ${ranged.size} in ${ranges[rangeIdx].first}",
-        "Charts of what the ring recorded. Tap a metric to switch, pick a time range, then drag the " +
-            "window under the graph to scrub and pull its edges to zoom. The tiles show the average, " +
-            "min, max and latest value for whatever slice is in view.")
+        "Charts of what the ring recorded. Tap a metric to switch and pick a time range. Tap or drag " +
+            "on the graph to read a point; drag the window below it to scrub and pull its edges to " +
+            "zoom. The tiles show the average, min, max and latest value for whatever slice is in view.")
 
     Spacer(Modifier.height(14.dp))
     MetricChips(metric) { metric = it; window = 0f to 1f }
@@ -72,10 +71,6 @@ fun StatsScreen(vm: RingViewModel) {
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(20.dp)) {
         Column(Modifier.padding(14.dp)) {
             MetricChart(ranged, color, window, onWindow = { window = it }, unit = metric.unit)
-            Spacer(Modifier.height(4.dp))
-            Text("Tap the chart to read a point · drag the window below to scrub · pull the edges to zoom",
-                color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp,
-                textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
         }
     }
 
