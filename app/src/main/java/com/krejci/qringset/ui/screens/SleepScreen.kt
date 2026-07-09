@@ -1,4 +1,4 @@
-package com.krejci.qringset.ui
+package com.krejci.qringset.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -37,8 +37,17 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.krejci.qringset.data.MetricType
 import com.krejci.qringset.data.Point
 import com.krejci.qringset.data.SleepSegment
-import com.krejci.qringset.domain.NightSleep
 import com.krejci.qringset.domain.SleepEngine
+import com.krejci.qringset.ui.RingViewModel
+import com.krejci.qringset.ui.SleepColor
+import com.krejci.qringset.ui.components.ArcGauge
+import com.krejci.qringset.ui.components.Hypnogram
+import com.krejci.qringset.ui.components.MiniLine
+import com.krejci.qringset.ui.components.ScreenHeader
+import com.krejci.qringset.ui.components.SleepGoalDial
+import com.krejci.qringset.ui.components.sleepStageColor
+import com.krejci.qringset.ui.components.sleepStageLabel
+import com.krejci.qringset.ui.metricColor
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale

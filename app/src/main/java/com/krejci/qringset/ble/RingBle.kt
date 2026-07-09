@@ -337,7 +337,7 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
         else if (liveHr.value == null) liveStatus.value = "Measuring — hold still, ~30s to lock"
     }
 
-    private fun hex(b: ByteArray) = b.joinToString(" ") { "%02x".format(it.toInt() and 0xFF) }
+    private fun hex(b: ByteArray) = RingProtocol.hex(b)
 
     private fun addSample(m: MetricType, epoch: Long, value: Int) { col[m]?.put(epoch, value) }
 
@@ -536,19 +536,13 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
         return byteArrayOf(CMD_HR_READ.toByte(), (ts and 0xFF).toByte(), ((ts ushr 8) and 0xFF).toByte(), ((ts ushr 16) and 0xFF).toByte(), ((ts ushr 24) and 0xFF).toByte())
     }
 
-    private fun packet(head: ByteArray): ByteArray {
-        val p = ByteArray(16); System.arraycopy(head, 0, p, 0, head.size)
-        var sum = 0; for (i in 0..14) sum += p[i].toInt() and 0xFF
-        p[15] = (sum % 255).toByte(); return p
-    }
-
-    private fun u16(r: ByteArray, off: Int) = (r[off].toInt() and 0xFF) or ((r[off + 1].toInt() and 0xFF) shl 8)
-    private fun le32(r: ByteArray, off: Int): Long = (r[off].toLong() and 0xFF) or ((r[off + 1].toLong() and 0xFF) shl 8) or ((r[off + 2].toLong() and 0xFF) shl 16) or ((r[off + 3].toLong() and 0xFF) shl 24)
-    private fun bcd(b: Byte): Int = ("%02x".format(b.toInt() and 0xFF)).toInt()
-    private fun midnight(dayOffset: Int): Long {
-        val c = Calendar.getInstance(); c.set(Calendar.HOUR_OF_DAY, 0); c.set(Calendar.MINUTE, 0); c.set(Calendar.SECOND, 0); c.set(Calendar.MILLISECOND, 0); c.add(Calendar.DAY_OF_MONTH, dayOffset); return c.timeInMillis / 1000
-    }
-    private fun ymd(y: Int, mo0: Int, d: Int, h: Int, mi: Int): Long { val c = Calendar.getInstance(); c.set(y, mo0, d, h, mi, 0); c.set(Calendar.MILLISECOND, 0); return c.timeInMillis / 1000 }
+    // Wire-format helpers live in RingProtocol; these thin delegates keep the call sites tidy.
+    private fun packet(head: ByteArray) = RingProtocol.packet(head)
+    private fun u16(r: ByteArray, off: Int) = RingProtocol.u16(r, off)
+    private fun le32(r: ByteArray, off: Int) = RingProtocol.le32(r, off)
+    private fun bcd(b: Byte) = RingProtocol.bcd(b)
+    private fun midnight(dayOffset: Int) = RingProtocol.midnight(dayOffset)
+    private fun ymd(y: Int, mo0: Int, d: Int, h: Int, mi: Int) = RingProtocol.ymd(y, mo0, d, h, mi)
 
     @SuppressLint("MissingPermission")
     private fun closeGatt() {
