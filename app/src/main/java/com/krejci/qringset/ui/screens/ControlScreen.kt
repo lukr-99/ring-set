@@ -22,6 +22,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -46,6 +47,8 @@ import com.krejci.qringset.ble.Conn
 import com.krejci.qringset.ui.RingViewModel
 import com.krejci.qringset.ui.components.ScreenHeader
 import com.krejci.qringset.ui.components.SectionLabel
+import com.krejci.qringset.ui.components.SegmentedTabs
+import kotlin.math.roundToInt
 
 private val CARD = RoundedCornerShape(18.dp)
 
@@ -166,12 +169,13 @@ private fun StatusStrip(vm: RingViewModel) {
 private fun CameraShutterSection(vm: RingViewModel) {
     val ctx = LocalContext.current
     val a11y by vm.a11yConnected.collectAsStateWithLifecycle()
-    val camOn by vm.cameraMode.collectAsStateWithLifecycle()
+    val camOn = vm.cameraGestureOn
+    val trigger = vm.cameraTrigger
 
     SectionLabel("Camera shutter")
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = CARD) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Shake your ring to take a photo", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+            Text("Gesture your ring to take a photo", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
             Text("Ring Set taps the shutter of whatever camera is open when the ring signals a photo.",
                 fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
@@ -188,16 +192,44 @@ private fun CameraShutterSection(vm: RingViewModel) {
                 }
             }
 
-            // 2) the gesture toggle
+            // 2) master toggle
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Camera gesture", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-                    Text(if (camOn) "On — shake the ring to shoot" else "Off", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(if (camOn) "On" else "Off", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Switch(checked = camOn, onCheckedChange = { if (it) vm.enableCameraGesture() else vm.disableCameraGesture() })
+                Switch(checked = camOn, onCheckedChange = { vm.setCameraGesture(it) })
             }
 
-            // 3) jump to the camera, or test the shutter tap (opens the camera, then taps after ~2.5s)
+            // 3) trigger picker + tap sensitivity (only when enabled)
+            if (camOn) {
+                Text("TRIGGER", fontSize = 10.sp, letterSpacing = 1.sp, fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                SegmentedTabs(listOf("Shake", "Tap", "Both"), trigger) { vm.updateCameraTrigger(it) }
+                Text(
+                    when (trigger) {
+                        0 -> "Shake the ring while the camera is open."
+                        1 -> "Tap the ring — works without opening the camera from here."
+                        else -> "Shake or tap the ring to shoot."
+                    },
+                    fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (trigger != 0) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Tap sensitivity", Modifier.weight(1f), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
+                        Text("${vm.tapStrength}", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    }
+                    Slider(
+                        value = vm.tapStrength.toFloat(),
+                        onValueChange = { vm.updateTapStrength(it.roundToInt()) },
+                        valueRange = 1f..10f, steps = 8,
+                    )
+                    Text("Higher = more sensitive (1–10). Retune if taps miss or fire on their own.",
+                        fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+
+            // 4) jump to the camera, or test the shutter tap (opens the camera, then taps after ~2.5s)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(onClick = {
                     runCatching { ctx.startActivity(Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
