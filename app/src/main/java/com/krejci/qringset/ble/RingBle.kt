@@ -123,11 +123,6 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
         private const val CAM_FINISH = 0x06
         private const val CAM_TAKE_PHOTO = 0x02
         private const val CAM_KEEPALIVE_MS = 2_000L
-        // Tap gesture (Oudmon TouchControlReq, cmd 0x3B): [0x3B, 02, 01, appType, strength].
-        // appType 5 = camera → a tap emits the same CameraNotify action 2 as the camera-mode shake;
-        // appType 0 = off. strength = tap sensitivity 1..10. Persisted on the ring.
-        private const val CMD_TOUCH = 0x3B
-        private const val TOUCH_APP_CAMERA = 0x05
         private val HR_VALID = 30..220
         private const val CONNECT_TIMEOUT_MS = 12_000L
         private const val RECONNECT_DELAY_MS = 1_600L
@@ -251,17 +246,6 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
             if (cameraOn && ready) { doWrite(packet(byteArrayOf(CMD_CAMERA.toByte(), CAM_KEEP.toByte()))); scheduleCameraKeepAlive() }
         }
         handler.postDelayed(cameraKeepAlive!!, CAM_KEEPALIVE_MS)
-    }
-
-    /**
-     * Map (or unmap) the ring's tap gesture to the camera. When [enabled], a tap on the ring emits a
-     * CameraNotify "take photo" — the same signal [onCameraShutter] handles — with no camera mode
-     * needed. [strength] is the tap sensitivity 1..10. The ring persists this setting.
-     */
-    fun setTapShutter(enabled: Boolean, strength: Int) {
-        val app = if (enabled) TOUCH_APP_CAMERA else 0
-        val s = strength.coerceIn(1, 10)
-        withRing { doWrite(packet(byteArrayOf(CMD_TOUCH.toByte(), 0x02, 0x01, app.toByte(), s.toByte()))) }
     }
 
     // StartHeartRateRsp shares no opcode with this; camera notifies come back on cmd 0x02.

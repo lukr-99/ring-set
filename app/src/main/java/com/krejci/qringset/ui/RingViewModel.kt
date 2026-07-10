@@ -98,30 +98,13 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
     val scanning = MutableStateFlow(false)
 
     // ---- camera shutter (ring gesture → tap the system camera's shutter) ----
-    // trigger: 0 = shake (camera mode), 1 = tap (touch gesture), 2 = both.
-    var cameraGestureOn by mutableStateOf(prefs.getBoolean("cam_on", false)); private set
-    var cameraTrigger by mutableStateOf(prefs.getInt("cam_trigger", 0)); private set
-    var tapStrength by mutableStateOf(prefs.getInt("cam_tap_strength", 5).coerceIn(1, 10)); private set
+    // In camera mode the ring's motion sensor fires "take photo" on a shake OR a firm tap. This is a
+    // momentary "about to shoot" mode (keeps the ring busy), so it isn't persisted across launches.
+    var cameraGestureOn by mutableStateOf(false); private set
 
     fun setCameraGesture(on: Boolean) {
-        cameraGestureOn = on; prefs.edit().putBoolean("cam_on", on).apply(); applyCameraTrigger()
-    }
-    fun updateCameraTrigger(mode: Int) {
-        cameraTrigger = mode.coerceIn(0, 2); prefs.edit().putInt("cam_trigger", cameraTrigger).apply()
-        if (cameraGestureOn) applyCameraTrigger()
-    }
-    fun updateTapStrength(v: Int) {
-        tapStrength = v.coerceIn(1, 10); prefs.edit().putInt("cam_tap_strength", tapStrength).apply()
-        if (cameraGestureOn && cameraTrigger != 0) ble.setTapShutter(true, tapStrength)
-    }
-
-    /** Arm the ring for the selected trigger(s): shake needs camera mode; tap maps the touch gesture. */
-    private fun applyCameraTrigger() {
-        if (!cameraGestureOn) { ble.exitCameraMode(); ble.setTapShutter(false, tapStrength); return }
-        val shake = cameraTrigger == 0 || cameraTrigger == 2
-        val tap = cameraTrigger == 1 || cameraTrigger == 2
-        if (shake) ble.enterCameraMode() else ble.exitCameraMode()
-        ble.setTapShutter(tap, tapStrength)
+        cameraGestureOn = on
+        if (on) ble.enterCameraMode() else ble.exitCameraMode()
     }
 
     /** Fire a shutter tap after a short delay — used by the "Test" button once the camera is open. */
