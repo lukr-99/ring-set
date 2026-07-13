@@ -51,6 +51,7 @@ import com.krejci.qringset.ui.components.sleepStageColor
 import com.krejci.qringset.ui.components.sleepStageLabel
 import com.krejci.qringset.ui.metricColor
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -65,8 +66,13 @@ fun SleepScreen(vm: RingViewModel) {
     val nights = remember(segEntities, profile.goalSleepHours) {
         SleepEngine.nights(segEntities.map { SleepSegment(it.epoch, it.stage, it.durationMin) }, profile.goalSleepHours)
     }
-    var selectedNight by remember(nights) { mutableStateOf(0) }
-    val night = nights.getOrElse(selectedNight) { NightSleep.EMPTY }
+    // The chooser is a fixed week of day-slots so a day with no data still shows (an empty slot).
+    val week = remember(nights) { buildWeek(nights) }
+    var selected by remember(week) {
+        mutableStateOf(week.indexOfLast { it.night != null }.let { if (it >= 0) it else week.lastIndex })
+    }
+    val slot = week.getOrNull(selected)
+    val night = slot?.night ?: NightSleep.EMPTY
     val sleepHr = remember(hr, night) {
         hr.filter { it.epoch in night.start..night.end }.map { Point(it.epoch, it.value.toFloat()) }
     }
@@ -79,13 +85,18 @@ fun SleepScreen(vm: RingViewModel) {
 
     ScreenHeader(
         "Sleep",
-        if (night.hasData) "Night of ${fmtDay(night.start)} · ${fmtHM(night.asleepMin)}" else "No sleep recorded yet",
-        "Your most recent night from the ring. The hypnogram shows the stages through the night; the " +
-            "score blends how long you slept vs your goal, your deep- and REM-sleep share, and how " +
-            "efficiently you slept. Set your target with the goal card.",
+        when {
+            night.hasData -> "Night of ${fmtDay(night.start)} · ${fmtHM(night.asleepMin)}"
+            nights.isEmpty() -> "No sleep recorded yet"
+            slot != null -> "No sleep recorded for ${fmtDayMid(slot.dayMidnight)}"
+            else -> "No sleep recorded yet"
+        },
+        "Your recent nights from the ring. Pick a day in the strip; the hypnogram shows the stages " +
+            "through that night, and the score blends how long you slept vs your goal, your deep- and " +
+            "REM-sleep share, and how efficiently you slept.",
     )
 
-    if (!night.hasData) {
+    if (nights.isEmpty()) {
         Spacer(Modifier.height(40.dp))
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             Text("Sync the ring on the Data tab after a night's sleep.", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -93,66 +104,76 @@ fun SleepScreen(vm: RingViewModel) {
         return
     }
 
-    // ---- hero: duration + score ----
-    Spacer(Modifier.height(12.dp))
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(22.dp)) {
-        Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(fmtHM(night.asleepMin), fontSize = 32.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onBackground)
-                Text("${fmtTime(night.start)} – ${fmtTime(night.end)}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(10.dp))
-                Text(night.quality, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = SleepColor)
-                Text("${night.efficiencyPct}% efficient · ${night.awakenings} wake-ups", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            ArcGauge(night.score / 100f, SleepColor, night.score.toString(), "score", diameter = 128)
-        }
+    // ---- day chooser (a fixed week; empty days still show) ----
+    SleepLabel("Recent nights")
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(18.dp)) {
+        WeekStrip(week, selected, Modifier.padding(12.dp)) { selected = it }
     }
 
-    // ---- recent nights ----
-    if (nights.size > 1) {
-        SleepLabel("Recent nights")
+    if (!night.hasData) {
+        Spacer(Modifier.height(14.dp))
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(18.dp)) {
-            NightStrip(nights, selectedNight, Modifier.padding(14.dp)) { selectedNight = it }
-        }
-    }
-
-    // ---- hypnogram ----
-    SleepLabel("Sleep stages")
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(18.dp)) {
-        Column(Modifier.padding(14.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                for (stage in listOf(5, 4, 2, 3)) LegendDot(stage)
-            }
-            Spacer(Modifier.height(10.dp))
-            Hypnogram(night.segments)
-        }
-    }
-
-    // ---- stage breakdown ----
-    SleepLabel("Breakdown")
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(18.dp)) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            for (stage in listOf(3, 2, 4, 5)) {
-                val mins = night.stageMin(stage)
-                val pct = if (night.asleepMin > 0 && stage != 5) mins.toFloat() / night.asleepMin else 0f
-                StageBar(stage, mins, pct)
+            Column(Modifier.fillMaxWidth().padding(vertical = 26.dp, horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("No sleep recorded", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                Spacer(Modifier.height(4.dp))
+                Text("The ring logs sleep automatically while you wear it — nothing was recorded for this night.",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-    }
-
-    // ---- sleep vitals: HR + SpO2 overlaid on their own axes ----
-    SleepLabel("During sleep")
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(18.dp)) {
-        Column(Modifier.padding(14.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                LegendVital(metricColor(MetricType.HR), "Heart rate", avgHr?.let { "$it bpm" } ?: "—")
-                LegendVital(metricColor(MetricType.SPO2), "Blood oxygen", avgSpo2?.let { "$it%" } ?: "—")
+    } else {
+        // ---- hero: duration + score ----
+        Spacer(Modifier.height(14.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(22.dp)) {
+            Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(fmtHM(night.asleepMin), fontSize = 32.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onBackground)
+                    Text("${fmtTime(night.start)} – ${fmtTime(night.end)}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(10.dp))
+                    Text(night.quality, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = SleepColor)
+                    Text("${night.efficiencyPct}% efficient · ${night.awakenings} wake-ups", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                ArcGauge(night.score / 100f, SleepColor, night.score.toString(), "score", diameter = 128)
             }
-            Spacer(Modifier.height(10.dp))
-            if (sleepHr.size >= 2 || sleepSpo2.size >= 2) {
-                SleepVitals(sleepHr, sleepSpo2, metricColor(MetricType.HR), metricColor(MetricType.SPO2))
-            } else {
-                Text("Not enough overnight HR/SpO₂ to chart.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+
+        // ---- hypnogram ----
+        SleepLabel("Sleep stages")
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(18.dp)) {
+            Column(Modifier.padding(14.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    for (stage in listOf(5, 4, 2, 3)) LegendDot(stage)
+                }
+                Spacer(Modifier.height(10.dp))
+                Hypnogram(night.segments)
+            }
+        }
+
+        // ---- stage breakdown ----
+        SleepLabel("Breakdown")
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(18.dp)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                for (stage in listOf(3, 2, 4, 5)) {
+                    val mins = night.stageMin(stage)
+                    val pct = if (night.asleepMin > 0 && stage != 5) mins.toFloat() / night.asleepMin else 0f
+                    StageBar(stage, mins, pct)
+                }
+            }
+        }
+
+        // ---- sleep vitals: HR + SpO2 overlaid on their own axes ----
+        SleepLabel("During sleep")
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(18.dp)) {
+            Column(Modifier.padding(14.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                    LegendVital(metricColor(MetricType.HR), "Heart rate", avgHr?.let { "$it bpm" } ?: "—")
+                    LegendVital(metricColor(MetricType.SPO2), "Blood oxygen", avgSpo2?.let { "$it%" } ?: "—")
+                }
+                Spacer(Modifier.height(10.dp))
+                if (sleepHr.size >= 2 || sleepSpo2.size >= 2) {
+                    SleepVitals(sleepHr, sleepSpo2, metricColor(MetricType.HR), metricColor(MetricType.SPO2))
+                } else {
+                    Text("Not enough overnight HR/SpO₂ to chart.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
     }
@@ -183,39 +204,65 @@ fun SleepScreen(vm: RingViewModel) {
     }
 }
 
-/** A horizontal strip of the last few nights (sleep-duration bars); tap one to inspect it. */
+private data class DaySlot(val dayMidnight: Long, val night: NightSleep?)
+
+/** A fixed week of day-slots (sleep-duration bars); a day with no data still shows, dimmed with "–". */
 @Composable
-private fun NightStrip(nights: List<NightSleep>, selected: Int, modifier: Modifier = Modifier, onSelect: (Int) -> Unit) {
-    val shown = nights.take(7)
-    val maxMin = shown.maxOf { it.asleepMin }.coerceAtLeast(1)
-    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        // display oldest → newest (left → right); index i maps straight into [nights]
-        for (i in shown.indices.reversed()) {
-            val n = shown[i]
+private fun WeekStrip(week: List<DaySlot>, selected: Int, modifier: Modifier = Modifier, onSelect: (Int) -> Unit) {
+    val maxMin = (week.mapNotNull { it.night?.asleepMin }.maxOrNull() ?: 1).coerceAtLeast(1)
+    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        week.forEachIndexed { i, s ->
+            val n = s.night
             val on = i == selected
             Column(
-                Modifier.weight(1f).clip(RoundedCornerShape(12.dp))
+                Modifier.weight(1f).clip(RoundedCornerShape(10.dp))
                     .background(if (on) SleepColor.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant)
-                    .clickable { onSelect(i) }.padding(vertical = 9.dp, horizontal = 2.dp),
+                    .clickable { onSelect(i) }.padding(vertical = 9.dp, horizontal = 1.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text(fmtDow(n.start), fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
+                Text(fmtDowMid(s.dayMidnight), fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
                     color = if (on) SleepColor else MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(6.dp))
-                Box(Modifier.height(42.dp).width(12.dp), contentAlignment = Alignment.BottomCenter) {
-                    Box(
-                        Modifier.width(12.dp)
-                            .fillMaxHeight((n.asleepMin.toFloat() / maxMin).coerceIn(0.08f, 1f))
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(if (on) SleepColor else SleepColor.copy(alpha = 0.4f)),
-                    )
+                Box(Modifier.height(42.dp).width(11.dp), contentAlignment = Alignment.BottomCenter) {
+                    if (n != null) {
+                        Box(
+                            Modifier.width(11.dp)
+                                .fillMaxHeight((n.asleepMin.toFloat() / maxMin).coerceIn(0.08f, 1f))
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(if (on) SleepColor else SleepColor.copy(alpha = 0.4f)),
+                        )
+                    } else {
+                        Box(Modifier.size(5.dp).clip(CircleShape).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)))
+                    }
                 }
                 Spacer(Modifier.height(6.dp))
-                Text(fmtHShort(n.asleepMin), fontSize = 10.sp,
-                    color = if (on) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (n != null) fmtHShort(n.asleepMin) else "–", fontSize = 10.sp,
+                    color = if (n != null && on) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
+}
+
+/** Local-midnight epoch of the sleep-day (noon cutoff) that a night starting at [startEpoch] belongs to. */
+private fun localMidnight(epoch: Long): Long {
+    val c = Calendar.getInstance()
+    c.timeInMillis = epoch * 1000
+    c.set(Calendar.HOUR_OF_DAY, 0); c.set(Calendar.MINUTE, 0); c.set(Calendar.SECOND, 0); c.set(Calendar.MILLISECOND, 0)
+    return c.timeInMillis / 1000
+}
+
+/** A fixed [days]-day window ending at the current sleep-day; each slot holds its night, or null. */
+private fun buildWeek(nights: List<NightSleep>, days: Int = 7): List<DaySlot> {
+    val byDay = nights.associateBy { localMidnight(it.start - 12 * 3600) }
+    val todayMid = localMidnight(System.currentTimeMillis() / 1000 - 12 * 3600)
+    val out = ArrayList<DaySlot>(days)
+    val c = Calendar.getInstance()
+    for (i in days - 1 downTo 0) {
+        c.timeInMillis = todayMid * 1000; c.add(Calendar.DAY_OF_MONTH, -i)
+        val dm = c.timeInMillis / 1000
+        out.add(DaySlot(dm, byDay[dm]))
+    }
+    return out
 }
 
 @Composable
@@ -285,7 +332,9 @@ private fun SleepLabel(text: String) =
 
 private fun fmtHM(min: Int): String { val h = min / 60; val m = min % 60; return if (h > 0) "${h}h ${m}m" else "${m}m" }
 private fun fmtHShort(min: Int): String { val h = min / 60; val m = min % 60; return if (m >= 30) "${h + 1}h" else "${h}h" }
-private fun fmtDow(e: Long) = SimpleDateFormat("EEE", Locale.US).format(Date(sleepDay(e) * 1000))
+// Formatters for a sleep-day midnight (already resolved by the noon cutoff, so no shift here).
+private fun fmtDowMid(e: Long) = SimpleDateFormat("EEE", Locale.US).format(Date(e * 1000))
+private fun fmtDayMid(e: Long) = SimpleDateFormat("MMM d", Locale.US).format(Date(e * 1000))
 // The "night of" a session is the day it began (noon cutoff): a bedtime after midnight still
 // belongs to the previous calendar day, not the morning you woke on.
 private fun sleepDay(startEpoch: Long) = startEpoch - 12 * 3600
