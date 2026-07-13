@@ -132,7 +132,8 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
         ble.setInterval(min, autoReconnect)
     }
 
-    fun reconnect() = ble.reconnect(lastInterval.takeIf { it in 1..255 })
+    /** Reconnect, then immediately pull the latest data (a reconnect almost always means "catch me up"). */
+    fun reconnect() = ble.reconnect(lastInterval.takeIf { it in 1..255 }) { sync() }
     fun readInterval() = ble.readInterval()
     fun readBattery() = ble.readBattery()
 

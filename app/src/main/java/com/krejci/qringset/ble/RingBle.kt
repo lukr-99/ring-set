@@ -66,6 +66,7 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
     private var liveTick = 0
     private var cameraOn = false
     private var cameraKeepAlive: Runnable? = null
+    private var onReadyOnce: (() -> Unit)? = null
 
     // sync state
     private enum class Stage { HR, STEPS, SPO2, SLEEP, STRESS, HRV }
@@ -146,10 +147,11 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
     fun readInterval() { status.value = "Reading…"; withRing { doWrite(buildReadPacket()) } }
     fun readBattery() { withRing { doWrite(packet(byteArrayOf(CMD_BATTERY.toByte()))) } }
 
-    fun reconnect(applyMin: Int?) {
+    fun reconnect(applyMin: Int?, thenReady: (() -> Unit)? = null) {
         val a = adapter() ?: return
         if (!a.isEnabled) { status.value = "Bluetooth is off"; return }
         status.value = "Reconnecting…"
+        onReadyOnce = thenReady
         closeGatt()
         handler.postDelayed({
             val ad = adapter() ?: return@postDelayed
@@ -300,6 +302,8 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
         handler.post { if (pending != null) runPending() else readBatteryNow() }
         // If the user left camera mode on, re-arm it after a reconnect.
         if (cameraOn) handler.post { doWrite(packet(byteArrayOf(CMD_CAMERA.toByte(), CAM_ENTER.toByte()))); scheduleCameraKeepAlive() }
+        // One-shot hook (e.g. sync-after-reconnect), run after the pending action.
+        onReadyOnce?.let { val f = it; onReadyOnce = null; handler.post(f) }
     }
 
     @SuppressLint("MissingPermission")
