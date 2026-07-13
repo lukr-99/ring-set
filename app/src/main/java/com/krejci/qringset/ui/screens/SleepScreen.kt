@@ -285,8 +285,11 @@ private fun SleepLabel(text: String) =
 
 private fun fmtHM(min: Int): String { val h = min / 60; val m = min % 60; return if (h > 0) "${h}h ${m}m" else "${m}m" }
 private fun fmtHShort(min: Int): String { val h = min / 60; val m = min % 60; return if (m >= 30) "${h + 1}h" else "${h}h" }
-private fun fmtDow(e: Long) = SimpleDateFormat("EEE", Locale.US).format(Date(e * 1000))
+private fun fmtDow(e: Long) = SimpleDateFormat("EEE", Locale.US).format(Date(sleepDay(e) * 1000))
+// The "night of" a session is the day it began (noon cutoff): a bedtime after midnight still
+// belongs to the previous calendar day, not the morning you woke on.
+private fun sleepDay(startEpoch: Long) = startEpoch - 12 * 3600
 private fun fmtHours(h: Float): String { val i = h.toInt(); val m = ((h - i) * 60).roundToInt(); return if (m > 0) "${i}h ${m}m" else "${i}h" }
 private fun fmtTime(e: Long) = SimpleDateFormat("HH:mm", Locale.US).format(Date(e * 1000))
-private fun fmtDay(e: Long) = SimpleDateFormat("MMM d", Locale.US).format(Date(e * 1000))
+private fun fmtDay(e: Long) = SimpleDateFormat("MMM d", Locale.US).format(Date(sleepDay(e) * 1000))
 private fun fmtClock(m: Int) = "%02d:%02d".format((m / 60) % 24, m % 60)
