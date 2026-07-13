@@ -57,6 +57,8 @@ fun sleepStageLabel(stage: Int) = when (stage) { 5 -> "Awake"; 4 -> "REM"; 2 -> 
 
 // Row order top→bottom: Awake, REM, Light, Deep.
 private val STAGE_ROW = mapOf(5 to 0, 4 to 1, 2 to 2, 3 to 3)
+// A stretch with no stage data longer than this is treated as a missing-data gap, not sleep.
+private const val SLEEP_GAP_TOL_S = 10 * 60L
 
 /**
  * Stepped hypnogram: colored blocks per stage across the night. Tap or drag across it to select a
@@ -68,20 +70,25 @@ fun Hypnogram(segments: List<SleepSegment>, modifier: Modifier = Modifier) {
     val axisArgb = MaterialTheme.colorScheme.onSurfaceVariant.toArgb()
     val scrubColor = MaterialTheme.colorScheme.onSurface
     val outlineColor = MaterialTheme.colorScheme.onSurface
-    val total = segments.sumOf { it.durationMin }.coerceAtLeast(1)
     var selected by remember(segments) { mutableStateOf(-1) }
     val zoom = rememberZoomPan(segments)
 
-    // Map a screen fraction [0,1] (already un-zoomed) to a segment index by cumulative duration.
-    fun indexAtFrac(dataFrac: Float): Int {
-        val target = dataFrac.coerceIn(0f, 1f) * total
-        var acc = 0
-        segments.forEachIndexed { i, s -> acc += s.durationMin; if (target <= acc) return i }
-        return segments.size - 1
-    }
-
     val nightStart = segments.first().epoch
     val nightEnd = segments.last().epoch + segments.last().durationMin * 60L
+    val span = (nightEnd - nightStart).coerceAtLeast(1L)
+
+    // Map a screen fraction [0,1] (already un-zoomed) to the segment nearest that wall-clock time.
+    fun indexAtFrac(dataFrac: Float): Int {
+        val target = nightStart + (dataFrac.coerceIn(0f, 1f) * span).toLong()
+        var best = 0; var bestDist = Long.MAX_VALUE
+        segments.forEachIndexed { i, s ->
+            val end = s.epoch + s.durationMin * 60L
+            if (target in s.epoch..end) return i
+            val d = minOf(kotlin.math.abs(target - s.epoch), kotlin.math.abs(target - end))
+            if (d < bestDist) { bestDist = d; best = i }
+        }
+        return best
+    }
 
     Column(modifier) {
         // ---- detail readout ----
@@ -123,14 +130,16 @@ fun Hypnogram(segments: List<SleepSegment>, modifier: Modifier = Modifier) {
             var selX0 = -1f; var selX1 = -1f
             var prevYc = -1f
             val stepColor = scrubColor.copy(alpha = 0.35f)
+            // Position blocks by real wall-clock time, so a stretch the ring didn't record shows as
+            // an empty gap (bridged by a dashed connector) instead of being packed away.
+            fun ux(epoch: Long) = zoom.x((epoch - nightStart).toFloat() / span, 0f, size.width)
             clipRect(0f, 0f, size.width, plotH) {
-                var acc = 0
+                var prevEndEpoch = nightStart; var prevEndX = -1f
                 for ((i, s) in segments.withIndex()) {
                     val row = STAGE_ROW[s.stage]
-                    if (row == null) { acc += s.durationMin; continue }
-                    val x0 = zoom.x(acc.toFloat() / total, 0f, size.width)
-                    val x1 = zoom.x((acc + s.durationMin).toFloat() / total, 0f, size.width)
-                    acc += s.durationMin
+                    val segEnd = s.epoch + s.durationMin * 60L
+                    if (row == null) { prevEndEpoch = segEnd; continue }
+                    val x0 = ux(s.epoch); val x1 = ux(segEnd)
                     val top = row * rowH + rowH * 0.18f
                     val h = rowH * 0.64f
                     val w = (x1 - x0).coerceAtLeast(1.5f)
@@ -139,12 +148,17 @@ fun Hypnogram(segments: List<SleepSegment>, modifier: Modifier = Modifier) {
                         color = sleepStageColor(s.stage).copy(alpha = if (selected < 0 || isSel) 1f else 0.55f),
                         topLeft = Offset(x0, top), size = Size(w, h), cornerRadius = CornerRadius(4f, 4f),
                     )
-                    // stepped connector line joining the stages into one continuous trace
+                    // stepped connector joining the stages; dashed across a missing-data gap
                     val yc = row * rowH + rowH * 0.5f
-                    if (prevYc >= 0f) drawLine(stepColor, Offset(x0, prevYc), Offset(x0, yc), strokeWidth = 2f)
+                    if (prevYc >= 0f) {
+                        if (s.epoch - prevEndEpoch > SLEEP_GAP_TOL_S)
+                            drawLine(stepColor, Offset(prevEndX, prevYc), Offset(x0, yc), strokeWidth = 2f, pathEffect = GapDash)
+                        else
+                            drawLine(stepColor, Offset(x0, prevYc), Offset(x0, yc), strokeWidth = 2f)
+                    }
                     drawLine(stepColor, Offset(x0, yc), Offset(x1, yc), strokeWidth = 2f)
-                    prevYc = yc
-                    if (isSel) { selX0 = x0; selX1 = x0 + w }
+                    prevYc = yc; prevEndEpoch = segEnd; prevEndX = x1
+                    if (isSel) { selX0 = x0; selX1 = x1 }
                 }
                 // scrubber highlight over the selected segment
                 if (selX0 >= 0f) {

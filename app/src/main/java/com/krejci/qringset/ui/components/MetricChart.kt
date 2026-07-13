@@ -95,14 +95,32 @@ private fun DrawScope.series(
         }
     }
 
-    val fill = Path().apply {
-        moveTo(px(0), plotBottom)
-        seg.forEachIndexed { i, p -> lineTo(px(i), py(p.value)) }
-        lineTo(px(seg.size - 1), plotBottom); close()
+    // Draw the trace in continuous runs; bridge missing-data gaps with a dashed line and no fill.
+    val strokeW = if (main) 3f else 1.6f
+    val brush = Brush.verticalGradient(listOf(color.copy(alpha = 0.34f), color.copy(alpha = 0f)), startY = plotTop, endY = plotBottom)
+    val thr = gapThresholdSeconds(seg.map { it.epoch })
+    var s0 = 0
+    while (s0 < seg.size) {
+        var s1 = s0
+        while (s1 + 1 < seg.size && seg[s1 + 1].epoch - seg[s1].epoch <= thr) s1++
+        if (s1 > s0) {
+            val fp = Path().apply {
+                moveTo(px(s0), plotBottom)
+                for (k in s0..s1) lineTo(px(k), py(seg[k].value))
+                lineTo(px(s1), plotBottom); close()
+            }
+            drawPath(fp, brush)
+            val lp = Path().apply { for (k in s0..s1) if (k == s0) moveTo(px(k), py(seg[k].value)) else lineTo(px(k), py(seg[k].value)) }
+            drawPath(lp, color, style = Stroke(width = strokeW))
+        } else {
+            drawCircle(color, strokeW * 0.9f, Offset(px(s0), py(seg[s0].value)))
+        }
+        if (s1 + 1 < seg.size) {
+            drawLine(color.copy(alpha = 0.5f), Offset(px(s1), py(seg[s1].value)), Offset(px(s1 + 1), py(seg[s1 + 1].value)),
+                strokeWidth = strokeW * 0.7f, pathEffect = GapDash)
+        }
+        s0 = s1 + 1
     }
-    drawPath(fill, Brush.verticalGradient(listOf(color.copy(alpha = 0.34f), color.copy(alpha = 0f)), startY = plotTop, endY = plotBottom))
-    val line = Path().apply { seg.forEachIndexed { i, p -> if (i == 0) moveTo(px(i), py(p.value)) else lineTo(px(i), py(p.value)) } }
-    drawPath(line, color, style = Stroke(width = if (main) 3f else 1.6f))
     if (main) {
         val lx = px(seg.size - 1); val ly = py(seg.last().value)
         drawCircle(color, 4.5f, Offset(lx, ly))

@@ -51,17 +51,33 @@ fun SleepVitals(hr: List<Point>, spo2: List<Point>, hrColor: Color, spo2Color: C
             val lo = pts.minOf { it.value }; val hi = pts.maxOf { it.value }
             val span = (hi - lo).coerceAtLeast(1f)
             fun py(v: Float) = plotBottom - (v - lo) / span * (plotBottom - plotTop)
+            val thr = gapThresholdSeconds(pts.map { it.epoch })
+            val brush = Brush.verticalGradient(listOf(color.copy(alpha = 0.22f), color.copy(alpha = 0f)), startY = plotTop, endY = plotBottom)
             clipRect(leftInset, 0f, size.width - rightInset, size.height) {
-                if (fill) {
-                    val fp = Path().apply {
-                        moveTo(px(pts.first().epoch), plotBottom)
-                        pts.forEach { lineTo(px(it.epoch), py(it.value)) }
-                        lineTo(px(pts.last().epoch), plotBottom); close()
+                var s0 = 0
+                while (s0 < pts.size) {
+                    var s1 = s0
+                    while (s1 + 1 < pts.size && pts[s1 + 1].epoch - pts[s1].epoch <= thr) s1++
+                    if (s1 > s0) {
+                        if (fill) {
+                            val fp = Path().apply {
+                                moveTo(px(pts[s0].epoch), plotBottom)
+                                for (k in s0..s1) lineTo(px(pts[k].epoch), py(pts[k].value))
+                                lineTo(px(pts[s1].epoch), plotBottom); close()
+                            }
+                            drawPath(fp, brush)
+                        }
+                        val lp = Path().apply { for (k in s0..s1) if (k == s0) moveTo(px(pts[k].epoch), py(pts[k].value)) else lineTo(px(pts[k].epoch), py(pts[k].value)) }
+                        drawPath(lp, color, style = Stroke(width = 2.4f))
+                    } else {
+                        drawCircle(color, 2.4f, Offset(px(pts[s0].epoch), py(pts[s0].value)))
                     }
-                    drawPath(fp, Brush.verticalGradient(listOf(color.copy(alpha = 0.22f), color.copy(alpha = 0f)), startY = plotTop, endY = plotBottom))
+                    if (s1 + 1 < pts.size) {
+                        drawLine(color.copy(alpha = 0.5f), Offset(px(pts[s1].epoch), py(pts[s1].value)),
+                            Offset(px(pts[s1 + 1].epoch), py(pts[s1 + 1].value)), strokeWidth = 1.8f, pathEffect = GapDash)
+                    }
+                    s0 = s1 + 1
                 }
-                val lp = Path().apply { pts.forEachIndexed { i, p -> if (i == 0) moveTo(px(p.epoch), py(p.value)) else lineTo(px(p.epoch), py(p.value)) } }
-                drawPath(lp, color, style = Stroke(width = 2.4f))
             }
         }
 
