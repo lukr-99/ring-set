@@ -24,8 +24,8 @@ if ($LASTEXITCODE -ne 0 -or -not $list) {
     Write-Host "Could not read app data (is the app installed as a debug build, and have you synced?)." -ForegroundColor Yellow
     exit 1
 }
-$csvs = $list -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '\.csv$' }
-if (-not $csvs) { Write-Host "No CSV files yet. Tap 'Sync heart rate' in the app first." -ForegroundColor Yellow; exit 0 }
+$csvs = $list -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '\.(csv|json)$' }
+if (-not $csvs) { Write-Host "No exported files yet. Tap 'Sync now' in the app first." -ForegroundColor Yellow; exit 0 }
 
 foreach ($f in $csvs) {
     $f = $f.Trim()

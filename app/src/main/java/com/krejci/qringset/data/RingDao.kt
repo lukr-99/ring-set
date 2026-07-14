@@ -23,6 +23,9 @@ interface RingDao {
     @Query("SELECT COUNT(*) FROM samples WHERE metric = :m")
     fun count(m: String): Flow<Int>
 
+    @Query("SELECT MAX(epoch) FROM samples WHERE metric = :m")
+    suspend fun newestEpoch(m: String): Long?
+
     @Query("SELECT * FROM sleep ORDER BY epoch")
     fun sleep(): Flow<List<SleepEntity>>
 
@@ -37,6 +40,9 @@ interface RingDao {
 
     @Query("SELECT * FROM known_rings ORDER BY lastSeen DESC")
     fun rings(): Flow<List<KnownRingEntity>>
+
+    @Query("SELECT * FROM known_rings ORDER BY lastSeen DESC")
+    suspend fun ringsNow(): List<KnownRingEntity>
 
     @Insert
     suspend fun insertWorkout(w: WorkoutEntity): Long

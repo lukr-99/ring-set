@@ -54,8 +54,12 @@ private fun DrawScope.series(
     val n = points.size
     val i0 = floor(a * (n - 1)).toInt().coerceIn(0, n - 1)
     val i1 = ceil(b * (n - 1)).toInt().coerceIn(0, n - 1)
-    val seg = points.subList(i0, (i1 + 1).coerceAtMost(n))
-    if (seg.size < 2) return
+    val raw = points.subList(i0, (i1 + 1).coerceAtMost(n))
+    if (raw.size < 2) return
+    // Zoom-based averaging: a wide window (a week / all data) is averaged into buckets so the line
+    // stays readable; as you scrub the window smaller, fewer points are in view so detail returns.
+    val maxDraw = if (main) 220 else 120
+    val seg = downsampleMean(raw, maxDraw)
     val rawLo = seg.minOf { it.value }; val rawHi = seg.maxOf { it.value }
     val pad = ((rawHi - rawLo) * 0.15f).coerceAtLeast(1f)
     val lo = rawLo - pad; val hi = rawHi + pad
@@ -78,10 +82,12 @@ private fun DrawScope.series(
             val value = (hi - g * (hi - lo) / 3).roundToInt()
             drawContext.canvas.nativeCanvas.drawText(value.toString(), 3f, gy + 7f, paint)
         }
-        // X time labels — several ticks across the window, not just the ends
+        // X time labels — several ticks across the window, not just the ends. Skip any label that
+        // would collide with the previous one (happens when the window holds only a few points).
         val span = seg.last().epoch - seg.first().epoch
         val fmt = SimpleDateFormat(if (span < 2 * 86400) "HH:mm" else "MMM d", Locale.US)
         val ticks = 4
+        var lastRight = -1e9f
         for (t in 0 until ticks) {
             val idx = (t.toFloat() / (ticks - 1) * (seg.size - 1)).roundToInt().coerceIn(0, seg.size - 1)
             val label = fmt.format(Date(seg[idx].epoch * 1000))
@@ -91,7 +97,9 @@ private fun DrawScope.series(
                 ticks - 1 -> size.width - rightPad - w
                 else -> px(idx) - w / 2f
             }.coerceIn(0f, size.width - w)
+            if (x < lastRight + 10f) continue
             drawContext.canvas.nativeCanvas.drawText(label, x, size.height - 3f, paint)
+            lastRight = x + w
         }
     }
 
@@ -155,6 +163,27 @@ private fun DrawScope.series(
         tp.color = axisArgb
         drawContext.canvas.nativeCanvas.drawText(tStr, bx + 9f, by + 49f, tp)
     }
+}
+
+/**
+ * Average a series down to at most [target] points by grouping consecutive samples into equal
+ * buckets and taking each bucket's mean value and mean time. Returns the input unchanged when it is
+ * already small enough, so zoomed-in windows keep full detail.
+ */
+private fun downsampleMean(points: List<Point>, target: Int): List<Point> {
+    val n = points.size
+    if (n <= target || target < 2) return points
+    val out = ArrayList<Point>(target)
+    for (b in 0 until target) {
+        val lo = b * n / target
+        val hi = ((b + 1) * n / target).coerceAtMost(n)
+        if (hi <= lo) continue
+        var sumV = 0f; var sumE = 0.0
+        for (k in lo until hi) { sumV += points[k].value; sumE += points[k].epoch }
+        val cnt = hi - lo
+        out += Point((sumE / cnt).toLong(), sumV / cnt)
+    }
+    return out
 }
 
 @Composable

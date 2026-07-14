@@ -73,12 +73,21 @@ fun DataScreen(vm: RingViewModel, onExportShare: () -> Unit) {
 
     SectionLabel("Options")
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(16.dp)) {
-        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Auto-sync", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-                Text("Pulls new data about every ${vm.lastInterval} min while the app is open", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(Modifier.padding(horizontal = 16.dp)) {
+            Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Auto-sync", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                    Text("Pulls new data about every ${vm.lastInterval} min while the app is open", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = vm.autoSyncEnabled, onCheckedChange = { vm.setAutoSync(it) })
             }
-            Switch(checked = vm.autoSyncEnabled, onCheckedChange = { vm.setAutoSync(it) })
+            Row(Modifier.fillMaxWidth().padding(bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Continuous HR logging", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                    Text("Streams the sensor while the app is open and logs a reading every minute (uses more battery). Bypasses the ring's unreliable HR log.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = vm.passiveHrEnabled, onCheckedChange = { vm.setPassiveHr(it) })
+            }
         }
     }
 }

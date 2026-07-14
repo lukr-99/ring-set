@@ -67,6 +67,8 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
     private var cameraOn = false
     private var cameraKeepAlive: Runnable? = null
     private var onReadyOnce: (() -> Unit)? = null
+    /** HR-log interval re-armed on every connect (kept in sync with the user's Control setting). */
+    @Volatile var logIntervalMin: Int = 5
 
     // sync state
     private enum class Stage { HR, STEPS, SPO2, SLEEP, STRESS, HRV }
@@ -136,6 +138,7 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
     // ---------- public actions ----------
 
     fun setInterval(min: Int, reconnectAfter: Boolean) {
+        logIntervalMin = min.coerceIn(1, 255)
         status.value = "Setting $min min…"
         withRing {
             doWrite(buildSetPacket(min))
@@ -296,10 +299,19 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
     private fun onReady() {
         cancelConnectTimeout(); ready = true; connecting = false; conn.value = Conn.CONNECTED
         status.value = "Connected ✓"
+        // Match QRing: push the phone's wall-clock to the ring on every connect, so its stored
+        // readings (esp. heart-rate history, which is stamped from the ring's own clock) line up
+        // with real time instead of drifting out of the app's recent-time windows.
+        // Spaced writes: two write-without-response packets fired back-to-back drop the second on
+        // the Android BLE stack, so each connect-time command gets its own slot. This also fixes a
+        // bug where the first sync request was silently dropped right after a write.
+        handler.post { setRingTime() }
+        // Re-arm HR logging every connect, like QRing does. Without this the ring can quietly stop
+        // writing HR history (its other metrics keep logging), leaving heart rate frozen days back.
+        handler.postDelayed({ rearmHrLogging() }, 160)
         // Run on the main handler so the sync accumulator and the (also main-posted) BLE
-        // responses share one thread. Battery only when idle, to not collide with the sync's
-        // first request.
-        handler.post { if (pending != null) runPending() else readBatteryNow() }
+        // responses share one thread. Battery only when idle, to not collide with the sync's first request.
+        handler.postDelayed({ if (pending != null) runPending() else readBatteryNow() }, 340)
         // If the user left camera mode on, re-arm it after a reconnect.
         if (cameraOn) handler.post { doWrite(packet(byteArrayOf(CMD_CAMERA.toByte(), CAM_ENTER.toByte()))); scheduleCameraKeepAlive() }
         // One-shot hook (e.g. sync-after-reconnect), run after the pending action.
@@ -308,6 +320,14 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
 
     @SuppressLint("MissingPermission")
     private fun readBatteryNow() { doWrite(packet(byteArrayOf(CMD_BATTERY.toByte()))) }
+
+    /** Push the phone's current wall-clock time to the ring (Colmi set-time, cmd 0x01). */
+    @SuppressLint("MissingPermission")
+    private fun setRingTime() { if (ready && writeChar != null) doWrite(packet(RingProtocol.setTimeHeader())) }
+
+    /** Re-enable HR history logging at [logIntervalMin] (Colmi set-HR-log, cmd 0x16 sub 0x02). */
+    @SuppressLint("MissingPermission")
+    private fun rearmHrLogging() { if (ready && writeChar != null) doWrite(buildSetPacket(logIntervalMin.coerceIn(1, 255))) }
 
     private val cb = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
@@ -565,7 +585,9 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
     private fun cancelStall() { syncTimeout?.let { handler.removeCallbacks(it) }; syncTimeout = null }
     private fun stageTimedOut() {
         when (stage) {
-            Stage.HR -> startSteps(); Stage.STEPS -> startSpo2(); Stage.SPO2 -> startSleep()
+            // A single day's HR read stalling shouldn't abandon the whole metric — try the next day.
+            Stage.HR -> if (syncOffsets.isNotEmpty()) requestNextDay() else startSteps()
+            Stage.STEPS -> startSpo2(); Stage.SPO2 -> startSleep()
             Stage.SLEEP -> startStress(); Stage.STRESS -> startHrv(); Stage.HRV -> finishSync()
         }
     }

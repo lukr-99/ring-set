@@ -84,14 +84,14 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun shareCsvs() {
-        val files = filesDir.listFiles { f -> f.name.endsWith(".csv") }?.toList().orEmpty()
+        val files = filesDir.listFiles { f -> f.name.endsWith(".csv") || f.name == "ring_export.json" }?.toList().orEmpty()
         if (files.isEmpty()) return
         val uris = ArrayList(files.map { FileProvider.getUriForFile(this, "$packageName.fileprovider", it) })
         val send = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-            type = "text/csv"
+            type = "*/*"
             putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        startActivity(Intent.createChooser(send, "Share ring CSVs"))
+        startActivity(Intent.createChooser(send, "Share ring data"))
     }
 }
