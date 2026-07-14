@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -13,6 +14,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.krejci.qringset.BuildConfig
 import com.krejci.qringset.CameraShutterService
+import com.krejci.qringset.HrLoggingService
 import com.krejci.qringset.Notifier
 import com.krejci.qringset.ble.Conn
 import com.krejci.qringset.ble.RingBle
@@ -84,8 +86,21 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
     var passiveHrEnabled by mutableStateOf(prefs.getBoolean("passive_hr", true))
         private set
     fun setPassiveHr(b: Boolean) {
+        if (passiveHrEnabled == b) return
         passiveHrEnabled = b; prefs.edit().putBoolean("passive_hr", b).apply()
-        reconcileStream()
+        reconcileStream(); updateLoggingService()
+    }
+    /** Run the foreground service (process-keep-alive) exactly while continuous logging is on. */
+    private fun updateLoggingService() {
+        val app = getApplication<Application>()
+        if (passiveHrEnabled) HrLoggingService.start(app) else HrLoggingService.stop(app)
+    }
+    // Keeps the toggle in sync when the notification's "Stop" turns logging off from outside the UI.
+    private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "passive_hr") {
+            val v = prefs.getBoolean("passive_hr", true)
+            if (v != passiveHrEnabled) { passiveHrEnabled = v; reconcileStream(); updateLoggingService() }
+        }
     }
     private var manualHr = false          // Stats "Measure" toggle wants the stream
     @Volatile private var streamOn = false // whether the shared live stream is currently running
@@ -187,6 +202,8 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
         if (autoSyncEnabled) startAutoSync()
         startHrSampler()
         reconcileStream()
+        prefs.registerOnSharedPreferenceChangeListener(prefListener)
+        if (passiveHrEnabled) updateLoggingService()
     }
 
     fun activeMac(): String = ble.mac
@@ -277,7 +294,12 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    override fun onCleared() { ble.stopLiveHr() }
+    override fun onCleared() {
+        // Reached only when the Activity is finishing (not on screen-off), so tear logging down.
+        prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
+        ble.stopLiveHr()
+        HrLoggingService.stop(getApplication())
+    }
 
     // ---- scanning for other rings ----
     private val scanCb = object : ScanCallback() {
