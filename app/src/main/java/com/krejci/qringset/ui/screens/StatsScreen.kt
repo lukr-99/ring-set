@@ -6,17 +6,25 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,12 +56,16 @@ fun StatsScreen(vm: RingViewModel) {
     val entities by vm.samples(metric).collectAsStateWithLifecycle(emptyList())
     val points = remember(entities) { entities.map { Point(it.epoch, it.value.toFloat()) } }
     val color = metricColor(metric)
-    val ranges = remember { listOf("1h" to 3600L, "12h" to 43_200L, "24h" to 86_400L, "Week" to 604_800L, "All" to Long.MAX_VALUE) }
+    // 1h/12h are rolling windows ending now; "Today" is since local midnight; -1 marks it, MAX = all.
+    val ranges = remember { listOf("1h" to 3600L, "12h" to 43_200L, "Today" to -1L, "Week" to 604_800L, "All" to Long.MAX_VALUE) }
     var rangeIdx by remember { mutableStateOf(2) }
     val ranged = remember(points, rangeIdx) {
         val secs = ranges[rangeIdx].second
-        if (secs == Long.MAX_VALUE) points
-        else { val cut = System.currentTimeMillis() / 1000 - secs; points.filter { it.epoch >= cut } }
+        when (secs) {
+            Long.MAX_VALUE -> points
+            -1L -> { val cut = startOfTodayEpoch(); points.filter { it.epoch >= cut } }
+            else -> { val cut = System.currentTimeMillis() / 1000 - secs; points.filter { it.epoch >= cut } }
+        }
     }
 
     ScreenHeader("Insights", "${metric.label} · ${ranged.size} in ${ranges[rangeIdx].first}",
@@ -64,13 +76,29 @@ fun StatsScreen(vm: RingViewModel) {
     Spacer(Modifier.height(14.dp))
     MetricChips(metric) { metric = it; window = 0f to 1f }
 
-    Spacer(Modifier.height(10.dp))
+    Spacer(Modifier.height(12.dp))
+    LiveMeasureCard(vm, metric, color, points)
+
+    Spacer(Modifier.height(12.dp))
     SegmentedTabs(ranges.map { it.first }, rangeIdx) { rangeIdx = it; window = 0f to 1f }
 
     Spacer(Modifier.height(14.dp))
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(20.dp)) {
         Column(Modifier.padding(14.dp)) {
-            MetricChart(ranged, color, window, onWindow = { window = it }, unit = metric.unit)
+            // Older data exists but none falls in the chosen window: explain instead of showing the
+            // generic "no data" placeholder, which wrongly implies the ring never recorded anything.
+            if (ranged.size < 2 && points.isNotEmpty()) {
+                val scope = if (ranges[rangeIdx].second == -1L) "today" else "the last ${ranges[rangeIdx].first}"
+                Box(Modifier.fillMaxWidth().height(250.dp), contentAlignment = Alignment.Center) {
+                    Text(
+                        "No ${metric.label.lowercase()} in $scope.\n" +
+                            "Newest reading is ${ago(points.last().epoch)} — tap Measure above to refresh.",
+                        fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else {
+                MetricChart(ranged, color, window, onWindow = { window = it }, unit = metric.unit)
+            }
         }
     }
 
@@ -132,4 +160,112 @@ private fun StatTile(k: String, v: String, u: String, color: Color, modifier: Mo
             Text(u, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+}
+
+/**
+ * A per-metric "measure right now" panel. Heart rate is the only value the ring streams in real
+ * time, so its Measure button opens a true live stream; the other metrics are sampled by the ring
+ * on its own cycle, so their Measure button pulls the freshest stored reading via a sync.
+ */
+@Composable
+private fun LiveMeasureCard(vm: RingViewModel, metric: MetricType, color: Color, points: List<Point>) {
+    val isHr = metric == MetricType.HR
+    val live by vm.liveHr.collectAsStateWithLifecycle()
+    val liveStatus by vm.liveStatus.collectAsStateWithLifecycle()
+    val syncing by vm.syncing.collectAsStateWithLifecycle()
+    val workoutActive by vm.workoutActive.collectAsStateWithLifecycle()
+    // Live streaming only applies to HR; reset the toggle whenever the selected metric changes.
+    var measuring by remember(metric) { mutableStateOf(false) }
+
+    DisposableEffect(metric, measuring) {
+        if (isHr && measuring) vm.startLiveHr()
+        onDispose { if (isHr) vm.stopLiveHr() }
+    }
+
+    val latest = points.lastOrNull()
+    val bigValue = if (isHr && measuring) (live?.toString() ?: "…")
+        else latest?.value?.roundToInt()?.toString() ?: "—"
+    val streaming = (isHr && measuring) || (!isHr && syncing)
+
+    Card(colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.12f)), shape = RoundedCornerShape(20.dp)) {
+        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(8.dp).clip(CircleShape).background(if (streaming) color else color.copy(alpha = 0.35f)))
+                Spacer(Modifier.width(7.dp))
+                Text("LIVE ${metric.short}", fontSize = 11.sp, letterSpacing = 1.5.sp, fontWeight = FontWeight.Bold, color = color)
+                Spacer(Modifier.weight(1f))
+                LiveActionButton(isHr, measuring, syncing, workoutActive, color, onToggleHr = { measuring = !measuring }, onSync = { vm.sync() })
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(bigValue, fontSize = 46.sp, fontWeight = FontWeight.ExtraBold, color = color)
+                if (metric.unit.isNotEmpty()) {
+                    Spacer(Modifier.width(6.dp))
+                    Text(metric.unit, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+                }
+            }
+            val footer = when {
+                isHr && measuring -> liveStatus.ifBlank { "Measuring…" }
+                isHr && workoutActive -> "A live session is running on the Activity tab."
+                !isHr && syncing -> "Reading the ring's latest ${metric.label.lowercase()}…"
+                latest != null -> "Latest reading ${ago(latest.epoch)}"
+                else -> "No readings yet — tap Measure."
+            }
+            Text(footer, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (!isHr) {
+                Text("Sampled by the ring on its own cycle; Measure pulls the freshest value.",
+                    fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun LiveActionButton(
+    isHr: Boolean, measuring: Boolean, syncing: Boolean, workoutActive: Boolean, color: Color,
+    onToggleHr: () -> Unit, onSync: () -> Unit,
+) {
+    val pad = PaddingValues(horizontal = 18.dp, vertical = 6.dp)
+    if (isHr) {
+        Button(
+            onClick = onToggleHr,
+            enabled = measuring || !workoutActive,
+            contentPadding = pad,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (measuring) MaterialTheme.colorScheme.surfaceVariant else color,
+                contentColor = if (measuring) MaterialTheme.colorScheme.onSurface else Color.White,
+            ),
+        ) { Text(if (measuring) "Stop" else "Measure", fontWeight = FontWeight.SemiBold) }
+    } else {
+        Button(
+            onClick = onSync,
+            enabled = !syncing,
+            contentPadding = pad,
+            colors = ButtonDefaults.buttonColors(containerColor = color, contentColor = Color.White),
+        ) {
+            if (syncing) {
+                CircularProgressIndicator(Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+                Text("Reading…", fontWeight = FontWeight.SemiBold)
+            } else Text("Measure", fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+private fun ago(epochSec: Long): String {
+    val d = System.currentTimeMillis() / 1000 - epochSec
+    return when {
+        d < 60 -> "just now"
+        d < 3600 -> "${d / 60}m ago"
+        d < 86_400 -> "${d / 3600}h ago"
+        else -> "${d / 86_400}d ago"
+    }
+}
+
+/** Unix seconds at local midnight today. */
+private fun startOfTodayEpoch(): Long {
+    val c = java.util.Calendar.getInstance()
+    c.set(java.util.Calendar.HOUR_OF_DAY, 0); c.set(java.util.Calendar.MINUTE, 0)
+    c.set(java.util.Calendar.SECOND, 0); c.set(java.util.Calendar.MILLISECOND, 0)
+    return c.timeInMillis / 1000
 }

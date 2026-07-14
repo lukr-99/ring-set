@@ -32,6 +32,25 @@ object RingProtocol {
     /** Read a binary-coded-decimal byte (e.g. 0x26 -> 26). */
     fun bcd(b: Byte): Int = ("%02x".format(b.toInt() and 0xFF)).toInt()
 
+    /** Encode 0..99 as a binary-coded-decimal byte (e.g. 26 -> 0x26). Inverse of [bcd]. */
+    fun bcdEncode(v: Int): Byte = (((v / 10) shl 4) or (v % 10)).toByte()
+
+    /**
+     * Set-time command header (cmd 0x01): BCD year(%100)/month/day/hour/minute/second + language
+     * byte (1 = English). The QRing app sends this on every connect; without it the ring's clock
+     * drifts and its stored readings get stamped at the wrong time. Checksum is added by [packet].
+     */
+    fun setTimeHeader(now: Calendar = Calendar.getInstance()): ByteArray = byteArrayOf(
+        0x01,
+        bcdEncode(now.get(Calendar.YEAR) % 100),
+        bcdEncode(now.get(Calendar.MONTH) + 1),
+        bcdEncode(now.get(Calendar.DAY_OF_MONTH)),
+        bcdEncode(now.get(Calendar.HOUR_OF_DAY)),
+        bcdEncode(now.get(Calendar.MINUTE)),
+        bcdEncode(now.get(Calendar.SECOND)),
+        0x01,
+    )
+
     /** Space-separated hex dump, for logging raw packets. */
     fun hex(b: ByteArray) = b.joinToString(" ") { "%02x".format(it.toInt() and 0xFF) }
 
