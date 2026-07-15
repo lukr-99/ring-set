@@ -138,13 +138,33 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
     // ---------- public actions ----------
 
     fun setInterval(min: Int, reconnectAfter: Boolean) {
-        logIntervalMin = min.coerceIn(1, 255)
-        status.value = "Setting $min min…"
+        val m = min.coerceIn(1, 255)
+        logIntervalMin = m
+        status.value = "Setting $m min…"
         withRing {
-            doWrite(buildSetPacket(min))
-            if (reconnectAfter) handler.postDelayed({ reconnect(min) }, 700)
-            else handler.postDelayed({ status.value = "✓ Interval set to $min min" }, 350)
+            doWrite(buildSetPacket(m))
+            if (reconnectAfter) {
+                handler.postDelayed({ reconnect(m) }, 700)
+            } else {
+                // A single write-without-response can be silently dropped by the BLE stack — that's
+                // how the interval gets "stuck" at its old value. Re-send once (spaced, so the stack
+                // doesn't coalesce them), then read it back so the UI shows what the ring really holds.
+                handler.postDelayed({ if (ready) doWrite(buildSetPacket(m)) }, 350)
+                handler.postDelayed({ if (ready) doWrite(buildReadPacket()) }, 800)
+            }
         }
+    }
+
+    /**
+     * Force the measurement interval back to a known-good value when the ring is stuck (e.g. reads
+     * 0 min / OFF and a plain set won't take). Does a clean reconnect — which re-pushes the clock and
+     * re-arms HR logging from scratch — then reads the interval back to confirm it stuck.
+     */
+    fun resetInterval(min: Int) {
+        val m = min.coerceIn(1, 255)
+        logIntervalMin = m
+        status.value = "Resetting measurement…"
+        reconnect(m) { handler.postDelayed({ if (ready) doWrite(buildReadPacket()) }, 500) }
     }
 
     fun readInterval() { status.value = "Reading…"; withRing { doWrite(buildReadPacket()) } }
@@ -312,6 +332,9 @@ class RingBle(private val context: Context, @Volatile var mac: String) {
         // Run on the main handler so the sync accumulator and the (also main-posted) BLE
         // responses share one thread. Battery only when idle, to not collide with the sync's first request.
         handler.postDelayed({ if (pending != null) runPending() else readBatteryNow() }, 340)
+        // Read the interval back (spaced after the rearm write) so the Control tab shows what the ring
+        // actually holds — surfaces a stuck 0/OFF instead of the app assuming its own last value.
+        handler.postDelayed({ if (ready && pending == null) doWrite(buildReadPacket()) }, 540)
         // If the user left camera mode on, re-arm it after a reconnect.
         if (cameraOn) handler.post { doWrite(packet(byteArrayOf(CMD_CAMERA.toByte(), CAM_ENTER.toByte()))); scheduleCameraKeepAlive() }
         // One-shot hook (e.g. sync-after-reconnect), run after the pending action.

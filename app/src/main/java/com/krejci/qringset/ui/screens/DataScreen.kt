@@ -84,9 +84,8 @@ fun DataScreen(vm: RingViewModel, onExportShare: () -> Unit) {
             Row(Modifier.fillMaxWidth().padding(bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Continuous HR logging", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-                    Text("Streams the sensor while the app is open and logs a reading every minute (uses more battery). Bypasses the ring's unreliable HR log.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Now in the Control tab under \"Background logging\", with keep-alive and battery controls.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Switch(checked = vm.passiveHrEnabled, onCheckedChange = { vm.setPassiveHr(it) })
             }
         }
     }

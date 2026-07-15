@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
  * Keeps the app process alive (and Doze-exempt) while continuous HR logging is on, so the live
@@ -35,6 +36,11 @@ class HrLoggingService : Service() {
         return START_NOT_STICKY
     }
 
+    override fun onDestroy() {
+        running.value = false
+        super.onDestroy()
+    }
+
     private fun startForegroundCompat() {
         val nm = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -44,7 +50,10 @@ class HrLoggingService : Service() {
             )
         }
         val open = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
+            this, 0,
+            Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_IMMUTABLE,
         )
         val stop = PendingIntent.getService(
             this, 1, Intent(this, HrLoggingService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE,
@@ -57,10 +66,19 @@ class HrLoggingService : Service() {
             .setContentIntent(open)
             .addAction(0, "Stop", stop)
             .build()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIF_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
-        } else {
-            startForeground(NOTIF_ID, notif)
+        // Starting/refreshing a foreground service can throw (e.g. ForegroundServiceStartNotAllowed
+        // if we were invoked from the background on Android 12+). Fail soft rather than crash — the
+        // user can retry from the Control tab's "Re-show notification" button once the app is open.
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIF_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+            } else {
+                startForeground(NOTIF_ID, notif)
+            }
+            running.value = true
+        } catch (_: Exception) {
+            running.value = false
+            stopSelf()
         }
     }
 
@@ -69,9 +87,19 @@ class HrLoggingService : Service() {
         private const val NOTIF_ID = 42
         const val ACTION_STOP = "com.krejci.qringset.STOP_HR_LOGGING"
 
-        fun start(ctx: Context) =
-            ContextCompat.startForegroundService(ctx, Intent(ctx, HrLoggingService::class.java))
+        /** True while the keep-alive notification/service is live. Observed by the UI. */
+        val running = MutableStateFlow(false)
 
-        fun stop(ctx: Context) = ctx.stopService(Intent(ctx, HrLoggingService::class.java))
+        fun start(ctx: Context) {
+            // From the foreground (a button tap or a visible screen) this is always allowed; guard
+            // anyway so a background caller can't crash the app.
+            try { ContextCompat.startForegroundService(ctx, Intent(ctx, HrLoggingService::class.java)) }
+            catch (_: Exception) { running.value = false }
+        }
+
+        fun stop(ctx: Context) {
+            running.value = false
+            ctx.stopService(Intent(ctx, HrLoggingService::class.java))
+        }
     }
 }

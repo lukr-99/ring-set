@@ -38,7 +38,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.os.PowerManager
 import android.provider.MediaStore
 import android.provider.Settings
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -85,7 +88,15 @@ fun ControlScreen(vm: RingViewModel) {
                 Text("Set")
             }
         }
+        OutlinedButton(onClick = { vm.resetMeasurement() }, modifier = Modifier.fillMaxWidth()) {
+            Text("Reset measurement")
+        }
+        Text("Stuck at 0 min / OFF, or a new interval won't take? This reconnects and re-applies " +
+            "your interval (${vm.lastInterval} min) from scratch, then reads it back to confirm.",
+            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
+
+    BackgroundLoggingSection(vm)
 
     // ---- connection: reconnect option + actions in one card ----
     SectionLabel("Connection")
@@ -211,6 +222,87 @@ private fun CameraShutterSection(vm: RingViewModel) {
 
             if (!a11y) Text("Turn on the accessibility service first, or the shutter tap won't work.",
                 fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+        }
+    }
+}
+
+/**
+ * Full control over the keep-alive: the continuous-logging toggle, whether its foreground service is
+ * actually live, a battery-optimisation exemption (so Android stops killing it), and a button to
+ * bring the notification back if it was dismissed or the service was killed.
+ */
+@Composable
+private fun BackgroundLoggingSection(vm: RingViewModel) {
+    val ctx = LocalContext.current
+    val serviceRunning by vm.loggingServiceRunning.collectAsStateWithLifecycle()
+    val logging = vm.passiveHrEnabled
+    // Recomputed whenever the toggle or service state changes, and each time Control is re-entered
+    // (e.g. returning from the system battery-optimisation screen).
+    val ignoringBattery = remember(logging, serviceRunning) {
+        (ctx.getSystemService(Context.POWER_SERVICE) as? PowerManager)?.isIgnoringBatteryOptimizations(ctx.packageName) == true
+    }
+
+    SectionLabel("Background logging")
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = CARD) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Continuous HR logging", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                    Text("Streams the sensor while the app runs and saves a reading every minute " +
+                        "(uses more battery). Bypasses the ring's unreliable HR log.",
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = logging, onCheckedChange = { vm.setPassiveHr(it) })
+            }
+
+            // Live service/notification status.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val dot = if (serviceRunning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                Box(Modifier.size(9.dp).clip(CircleShape).background(dot))
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    when {
+                        serviceRunning -> "Keep-alive running — notification active"
+                        logging -> "Logging on, but the keep-alive isn't running"
+                        else -> "Keep-alive off"
+                    },
+                    fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium,
+                )
+            }
+
+            // Battery-optimisation exemption — the usual reason the notification vanishes in a pocket.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(if (ignoringBattery) "Battery optimisation: off ✓" else "Battery optimisation: on",
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (ignoringBattery) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                    Text("If Android keeps killing the logger in the background, exempt Ring Set so it can keep running.",
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                OutlinedButton(onClick = { openBatterySettings(ctx) }, enabled = !ignoringBattery) {
+                    Text(if (ignoringBattery) "Done" else "Fix")
+                }
+            }
+
+            OutlinedButton(onClick = { vm.restartLoggingService() }, modifier = Modifier.fillMaxWidth()) {
+                Text("Re-show notification")
+            }
+            Text("Lost the keep-alive notification? This brings it back and restarts the logger.",
+                fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** Ask Android to exempt us from battery optimisation, falling back to the general settings list. */
+private fun openBatterySettings(ctx: Context) {
+    runCatching {
+        ctx.startActivity(
+            Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${ctx.packageName}"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }.onFailure {
+        runCatching {
+            ctx.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
     }
 }

@@ -90,10 +90,20 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
         passiveHrEnabled = b; prefs.edit().putBoolean("passive_hr", b).apply()
         reconcileStream(); updateLoggingService()
     }
+    /** Whether the keep-alive foreground service (and its notification) is currently live. */
+    val loggingServiceRunning = HrLoggingService.running
     /** Run the foreground service (process-keep-alive) exactly while continuous logging is on. */
     private fun updateLoggingService() {
         val app = getApplication<Application>()
         if (passiveHrEnabled) HrLoggingService.start(app) else HrLoggingService.stop(app)
+    }
+    /**
+     * Bring the keep-alive notification back if it was dismissed or its service was killed. Turns
+     * continuous logging on if it was off, otherwise just re-posts the notification. Safe to call
+     * from the UI (foreground), where starting a foreground service is always allowed.
+     */
+    fun restartLoggingService() {
+        if (!passiveHrEnabled) setPassiveHr(true) else HrLoggingService.start(getApplication())
     }
     // Keeps the toggle in sync when the notification's "Stop" turns logging off from outside the UI.
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
@@ -217,6 +227,9 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Reconnect, then immediately pull the latest data (a reconnect almost always means "catch me up"). */
     fun reconnect() = ble.reconnect(lastInterval.takeIf { it in 1..255 }) { sync() }
+
+    /** Escape hatch for a ring stuck at 0 min / OFF: reconnect, re-arm the interval, read it back. */
+    fun resetMeasurement() = ble.resetInterval(lastInterval.takeIf { it in 1..255 } ?: 5)
     fun readInterval() = ble.readInterval()
     fun readBattery() = ble.readBattery()
 
