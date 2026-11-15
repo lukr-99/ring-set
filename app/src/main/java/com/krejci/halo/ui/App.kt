@@ -1,5 +1,6 @@
 package com.krejci.halo.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -40,6 +41,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.krejci.halo.ui.screens.AboutScreen
 import com.krejci.halo.ui.screens.ActivityScreen
 import com.krejci.halo.ui.screens.ControlScreen
 import com.krejci.halo.ui.screens.DataScreen
@@ -64,12 +66,14 @@ enum class Screen(val label: String, val icon: ImageVector) {
 @Composable
 fun App(vm: RingViewModel, onExportShare: () -> Unit, onScan: () -> Unit) {
     var screen by remember { mutableStateOf(Screen.OVERVIEW) }
+    var showAbout by remember { mutableStateOf(false) }
+    BackHandler(enabled = showAbout) { showAbout = false }
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState())
                 .padding(start = 18.dp, end = 18.dp, top = 40.dp, bottom = 104.dp),
         ) {
-            when (screen) {
+            if (showAbout) AboutScreen { showAbout = false } else when (screen) {
                 Screen.OVERVIEW -> OverviewScreen(vm)
                 Screen.STATS -> StatsScreen(vm)
                 Screen.ACTIVITY -> ActivityScreen(vm)
@@ -77,10 +81,10 @@ fun App(vm: RingViewModel, onExportShare: () -> Unit, onScan: () -> Unit) {
                 Screen.DATA -> DataScreen(vm, onExportShare)
                 Screen.RING -> RingScreen(vm, onScan)
                 Screen.CONTROL -> ControlScreen(vm)
-                Screen.PROFILE -> ProfileScreen(vm)
+                Screen.PROFILE -> ProfileScreen(vm) { showAbout = true }
             }
         }
-        FloatingNav(screen, { screen = it },
+        FloatingNav(screen, { screen = it; showAbout = false },
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = 14.dp, end = 14.dp, bottom = 20.dp))
     }
 }

@@ -65,7 +65,7 @@ import java.util.Calendar
 import kotlin.math.roundToInt
 
 @Composable
-fun ProfileScreen(vm: RingViewModel) {
+fun ProfileScreen(vm: RingViewModel, onOpenAbout: () -> Unit) {
     val profile by vm.profile.collectAsStateWithLifecycle()
     var name by remember(profile) { mutableStateOf(profile.name) }
     var birth by remember(profile) { mutableStateOf(profile.birthYear.takeIf { it > 0 }?.toString() ?: "") }
@@ -166,6 +166,18 @@ fun ProfileScreen(vm: RingViewModel) {
 
     SectionLabel("Updates")
     UpdatesCard()
+    Spacer(Modifier.height(6.dp))
+
+    SectionLabel("About")
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenAbout),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text("About Halo", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+            Text("Who made it, send feedback, what it keeps, credits", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
     Spacer(Modifier.height(6.dp))
 
     if (showMeasure) MeasureRestingDialog(vm, onDismiss = { showMeasure = false }) { rhr = it.toString(); showMeasure = false }
