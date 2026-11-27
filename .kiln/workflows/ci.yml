@@ -1,0 +1,44 @@
+# Local (Kiln) CI for Halo (ring-set). The repository has no GitHub workflows, so this follows the README:
+# the one documented build command is ./gradlew assembleDebug. There are no unit tests and no CodePrint
+# validator, so there is no codeprint.yml. Run it with:
+#   kiln run .kiln/workflows/ci.yml --repo .
+# RING_MAC is not set, so the build uses the placeholder address (00:00:00:00:00:00), as the README says.
+# The app tests nothing on a device here: Android emulator tests need KVM, and the repository has none.
+name: CI
+
+on:
+  workflow_dispatch:
+
+env:
+  CI: "true"
+
+jobs:
+  build:
+    name: Build the debug APK
+    runs-on: ubuntu-latest
+    # compileSdk 35
+    container: ghcr.io/cirruslabs/android-sdk:35
+    timeout-minutes: 30
+    env:
+      # One build in a one-shot process (no daemon to leave behind).
+      GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Toolchain
+        run: |
+          java -version
+          echo "ANDROID_HOME=$ANDROID_HOME"
+
+      - name: Build
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Upload the APK
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: halo-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn
